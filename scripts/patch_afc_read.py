@@ -7,6 +7,44 @@ lib_path = root / "src/lib.rs"
 header_path = root / "include/airlift.h"
 
 src = exploit_path.read_text()
+old_listing = """                let mut entries = afc
+                    .list_dir(&remote_path)
+                    .await
+                    .map_err(|e| format!("AFC error: {e:?}"))?;
+
+                entries.retain(|name| name != "." && name != "..");
+                entries.sort_by_key(|name| name.to_lowercase());
+
+                serde_json::to_string(&entries)
+                    .map_err(|e| format!("JSON error: {e}"))"""
+new_listing = """                let mut names = afc
+                    .list_dir(&remote_path)
+                    .await
+                    .map_err(|e| format!("AFC error: {e:?}"))?;
+                names.retain(|name| name != "." && name != "..");
+                names.sort_by_key(|name| name.to_lowercase());
+
+                let mut entries = Vec::new();
+                for name in names {
+                    let child = if remote_path == "/" {
+                        format!("/{}", name)
+                    } else {
+                        format!("{}/{}", remote_path.trim_end_matches('/'), name)
+                    };
+                    let is_directory = afc.get_file_info(&child).await
+                        .map(|info| info.st_ifmt == "S_IFDIR")
+                        .unwrap_or(false);
+                    entries.push(serde_json::json!({
+                        "name": name,
+                        "isDirectory": is_directory
+                    }));
+                }
+                serde_json::to_string(&entries)
+                    .map_err(|e| format!("JSON error: {e}"))"""
+if old_listing in src:
+    src = src.replace(old_listing, new_listing, 1)
+elif "let mut names = afc" not in src:
+    raise SystemExit("Could not patch AFC directory metadata block")
 if "pub unsafe fn afc_read_file(" not in src:
     anchor = "// Public FFI entry point"
     if anchor not in src:

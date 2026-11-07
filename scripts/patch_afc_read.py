@@ -31,9 +31,13 @@ new_listing = """                let mut names = afc
                     } else {
                         format!("{}/{}", remote_path.trim_end_matches('/'), name)
                     };
-                    let is_directory = afc.get_file_info(&child).await
-                        .map(|info| info.st_ifmt == "S_IFDIR")
-                        .unwrap_or(false);
+                    // Metadata is preferred. If AFC cannot return metadata,
+                    // probe the path as a directory so a real folder is not
+                    // silently shown as an unreadable file.
+                    let is_directory = match afc.get_file_info(&child).await {
+                        Ok(info) => info.st_ifmt == "S_IFDIR",
+                        Err(_) => afc.list_dir(&child).await.is_ok(),
+                    };
                     entries.push(serde_json::json!({
                         "name": name,
                         "isDirectory": is_directory
@@ -43,7 +47,7 @@ new_listing = """                let mut names = afc
                     .map_err(|e| format!("JSON error: {e}"))"""
 if old_listing in src:
     src = src.replace(old_listing, new_listing, 1)
-elif "let mut names = afc" not in src:
+elif "// Metadata is preferred. If AFC cannot return metadata," not in src:
     raise SystemExit("Could not patch AFC directory metadata block")
 if "pub unsafe fn afc_read_file(" not in src:
     anchor = "// Public FFI entry point"

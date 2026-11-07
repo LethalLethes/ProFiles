@@ -211,7 +211,7 @@ pub unsafe fn afc_delete_path(pairing_path: *const c_char, remote_path: *const c
 
 lib = lib_path.read_text()
 if "al_afc_write_file(" not in lib:
-    anchor = "// ---------------------------------------------------------------------------\n// Exploit file operations"
+    anchor = "// ---------------------------------------------------------------------------\n// AFC File Manager"
     code = r"""
 #[no_mangle]
 pub unsafe extern "C" fn al_afc_write_file(pairing_path: *const c_char, remote_path: *const c_char,

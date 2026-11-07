@@ -350,8 +350,28 @@ private struct AFCRemoteFilePreview: View {
                     }.padding()
                 } else if isVideo, let player {
                     VideoPlayer(player: player)
-                        .onAppear { player.play() }
-                        .onDisappear { player.pause() }
+                        .onAppear {
+                            do {
+                                let session = AVAudioSession.sharedInstance()
+                                try session.setCategory(.playback, mode: .moviePlayback, options: [])
+                                try session.setActive(true)
+                                player.play()
+                            } catch {
+                                // Keep video playback available even if audio-session setup fails.
+                                player.play()
+                            }
+                        }
+                        .onDisappear {
+                            player.pause()
+                            do {
+                                try AVAudioSession.sharedInstance().setActive(
+                                    false,
+                                    options: [.notifyOthersOnDeactivation]
+                                )
+                            } catch {
+                                // Audio-session cleanup is best-effort.
+                            }
+                        }
                 } else if ["png", "jpg", "jpeg", "heic", "gif", "webp", "tif", "tiff", "bmp"].contains(ext),
                           let data, let image = UIImage(data: data) {
                     ScrollView { Image(uiImage: image).resizable().scaledToFit().padding() }

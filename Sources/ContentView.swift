@@ -254,6 +254,14 @@ private struct AFCExplorerView: View {
                         symbol: pairingReady ? "checkmark.circle.fill" : "doc.badge.plus"
                     )
 
+                    NavigationLink {
+                        AFCFileManagerView()
+                    } label: {
+                        Label("Cihaz fayllarını aç", systemImage: "externaldrive")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
                     Button {
                         showingPicker = true
                     } label: {

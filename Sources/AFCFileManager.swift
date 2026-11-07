@@ -6,7 +6,6 @@ import PDFKit
 import QuickLook
 import UIKit
 import SQLite3
-import SQLite3
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -162,20 +161,41 @@ private struct AFCFileManagerViewAtPath: View {
 
     var body: some View {
         Group {
-            if loading { ProgressView("Yüklənir…") }
-            else {
+            if loading {
+                ProgressView("Yüklənir…")
+            } else if entries.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "folder").font(.largeTitle)
+                    Text("Bu qovluqda görünən fayl yoxdur").font(.headline)
+                    Text("AFC yolu: \\(path)").font(.caption).foregroundStyle(.secondary)
+                    Button("Yenilə") { load() }.buttonStyle(.bordered)
+                }.padding()
+            } else {
                 List(entries) { entry in
                     if entry.isDirectory {
-                        NavigationLink(entry.name) { AFCFileManagerViewAtPath(path: child(entry.name)) }
+                        NavigationLink {
+                            AFCFileManagerViewAtPath(path: child(entry.name))
+                        } label: {
+                            Label(entry.name, systemImage: "folder")
+                        }
                     } else {
-                        Button(entry.name) { selectedFile = RemoteFile(path: child(entry.name), name: entry.name) }
-                            .foregroundStyle(.primary)
+                        Button {
+                            selectedFile = RemoteFile(path: child(entry.name), name: entry.name)
+                        } label: {
+                            Label(entry.name, systemImage: "doc")
+                        }.foregroundStyle(.primary)
                     }
                 }
             }
         }
         .navigationTitle(URL(fileURLWithPath: path).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { load() } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(loading)
+            }
+        }
         .task { load() }
         .sheet(item: $selectedFile) { AFCRemoteFilePreview(file: $0) }
         .alert("AFC", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum ProFilesTab: String, CaseIterable {
     case airlift = "Airlift"
@@ -15,7 +16,7 @@ private enum ProFilesTab: String, CaseIterable {
 }
 
 struct ContentView: View {
-    @State private var selectedTab: ProFilesTab = .airlift
+    @State private var selectedTab: ProFilesTab = .afc
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -75,6 +76,48 @@ private struct StatusCard: View {
     }
 }
 
+private struct PairingFileStore {
+    static var destinationURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ProFiles-Pairing.plist")
+    }
+
+    static var exists: Bool {
+        FileManager.default.fileExists(atPath: destinationURL.path)
+    }
+
+    static func importFile(from sourceURL: URL) throws {
+        let hasAccess = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if hasAccess { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+
+        let data = try Data(contentsOf: sourceURL)
+        guard !data.isEmpty else {
+            throw NSError(
+                domain: "ProFiles.Pairing",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Pairing faylı boşdur."]
+            )
+        }
+
+        // Validate that the selected file is a readable plist before saving it.
+        _ = try PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        )
+
+        try data.write(to: destinationURL, options: .atomic)
+    }
+
+    static func remove() throws {
+        if exists {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+    }
+}
+
 private struct AirliftExplorerView: View {
     var body: some View {
         NavigationStack {
@@ -86,13 +129,13 @@ private struct AirliftExplorerView: View {
                         symbol: "arrow.triangle.branch"
                     )
                     StatusCard(
-                        title: "Airlift bağlantısı qoşulmayıb",
-                        detail: "Hazırda bu ekran yalnız interfeys skeletidir. Dəstəklənən API qoşulmadan fayl və qovluq göstərilmir.",
+                        title: "Airlift adapteri qoşulmayıb",
+                        detail: "Bu modul ayrıca Airlift bağlantı adapteri tələb edir. Adapter qoşulmadan fayl siyahısı göstərilmir.",
                         symbol: "info.circle"
                     )
                     StatusCard(
                         title: "Giriş məhdudiyyəti",
-                        detail: "Airlift-in sınaqdan keçmiş imkanları xaricində sistem qovluqlarına giriş vəd edilmir.",
+                        detail: "Yalnız uğurla təsdiqlənmiş əməliyyat nəticələri göstəriləcək.",
                         symbol: "lock.shield"
                     )
                 }
@@ -104,29 +147,98 @@ private struct AirliftExplorerView: View {
 }
 
 private struct AFCExplorerView: View {
+    @State private var showingImporter = false
+    @State private var pairingReady = PairingFileStore.exists
+    @State private var statusMessage = PairingFileStore.exists
+        ? "Pairing faylı tətbiqdə saxlanılıb."
+        : "Pairing faylı hələ seçilməyib."
+    @State private var showingError = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     ModuleHeader(
                         title: "AFC Explorer",
-                        subtitle: "Qoşulmuş cihazın paired AFC xidmətində görünən fayllar.",
+                        subtitle: "Paired AFC xidmətinin təqdim etdiyi qovluqlar və fayllar.",
                         symbol: "folder"
                     )
+
                     StatusCard(
-                        title: "Pairing bağlantısı gözlənilir",
-                        detail: "Bu başlanğıc versiyada pairing faylı oxunmur və AFC sessiyası açılmır. Real AFC adapteri ayrıca qoşulmalıdır.",
-                        symbol: "cable.connector"
+                        title: pairingReady ? "Pairing faylı hazırdır" : "Pairing faylı tələb olunur",
+                        detail: statusMessage,
+                        symbol: pairingReady ? "checkmark.circle.fill" : "doc.badge.plus"
                     )
+
+                    Button {
+                        showingImporter = true
+                    } label: {
+                        Label(
+                            pairingReady ? "Pairing faylını dəyiş" : "Pairing faylı seç",
+                            systemImage: "doc.badge.plus"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    if pairingReady {
+                        Button(role: .destructive) {
+                            do {
+                                try PairingFileStore.remove()
+                                pairingReady = false
+                                statusMessage = "Pairing faylı tətbiqdən silindi."
+                            } catch {
+                                statusMessage = error.localizedDescription
+                                showingError = true
+                            }
+                        } label: {
+                            Label("Pairing faylını sil", systemImage: "trash")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
                     StatusCard(
-                        title: "AFC namespace",
-                        detail: "AFC yalnız xidmətin təqdim etdiyi sahəni göstərə bilər; bu, iOS root fayl sisteminə giriş demək deyil.",
-                        symbol: "lock"
+                        title: "LocalDev VPN",
+                        detail: "VPN-i iOS Settings-dən aktiv saxla. Bu ekran VPN statusunu birbaşa oxumur.",
+                        symbol: "network"
+                    )
+
+                    StatusCard(
+                        title: "AFC bağlantısı",
+                        detail: "Pairing faylı tətbiqə təhlükəsiz surətdə köçürülür. Real qovluq siyahısı üçün ProFiles-ə ayrıca AFC Rust adapteri və onun statik kitabxanası əlavə edilməlidir.",
+                        symbol: "cable.connector"
                     )
                 }
                 .padding()
             }
             .navigationTitle("AFC Explorer")
+            .fileImporter(
+                isPresented: $showingImporter,
+                allowedContentTypes: [.propertyList, .data],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    do {
+                        try PairingFileStore.importFile(from: url)
+                        pairingReady = true
+                        statusMessage = "ProFiles-Pairing.plist tətbiqin Documents qovluğunda saxlanıldı."
+                    } catch {
+                        statusMessage = error.localizedDescription
+                        showingError = true
+                    }
+                case .failure(let error):
+                    statusMessage = error.localizedDescription
+                    showingError = true
+                }
+            }
+            .alert("AFC Explorer", isPresented: $showingError) {
+                Button("Bağla", role: .cancel) { }
+            } message: {
+                Text(statusMessage)
+            }
         }
     }
 }
@@ -143,12 +255,12 @@ private struct CoreMediaLabView: View {
                     )
                     StatusCard(
                         title: "Test icra edilməyib",
-                        detail: "Burada gələcəkdə yalnız test nəticələri, cihaz build-i və xəta qeydləri göstəriləcək.",
+                        detail: "Burada test nəticələri, cihaz build-i və xəta qeydləri göstəriləcək.",
                         symbol: "testtube.2"
                     )
                     StatusCard(
                         title: "Fayl meneceri deyil",
-                        detail: "CoreMedia PoC nəticəsi öz-özlüyündə fayl sistemi icazəsi və ya faylları oxuma imkanı yaratmır.",
+                        detail: "CoreMedia test nəticəsi öz-özlüyündə fayl sistemi icazəsi yaratmır.",
                         symbol: "exclamationmark.shield"
                     )
                 }

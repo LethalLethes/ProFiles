@@ -1,7 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AirliftFFI
-import QuickLook
+import PDFKit
+import UIKit
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -38,7 +39,7 @@ private enum AFCBridge {
             if let error { al_string_free(error) }
         }
         guard rc == 0, let json else {
-            throw AFCBridgeError.invalidResult(error.map(String.init(cString:)) ?? "AFC siyahılama xətası: \(rc)")
+            throw AFCBridgeError.invalidResult(error.map { String(cString: $0) } ?? "AFC siyahılama xətası: \(rc)")
         }
         let data = Data(String(cString: json).utf8)
         return try JSONDecoder().decode([AFCEntry].self, from: data)
@@ -102,7 +103,7 @@ struct AFCFileManagerView: View {
             .navigationTitle(path == "/" ? "AFC Files" : URL(fileURLWithPath: path).lastPathComponent)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
                 }
             }
@@ -210,7 +211,7 @@ private struct AFCRemoteFilePreview: View {
         NavigationStack {
             Group {
                 if loading { ProgressView("Fayl oxunur…") }
-                else if let errorMessage { ContentUnavailableView("Fayl açıla bilmədi", systemImage: "exclamationmark.triangle", description: Text(errorMessage)) }
+                else if let errorMessage { VStack(spacing: 10) { Image(systemName: "exclamationmark.triangle").font(.largeTitle); Text("Fayl açıla bilmədi").font(.headline); Text(errorMessage).foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
                 else if ["png","jpg","jpeg","heic","gif"].contains(ext), let data, let image = UIImage(data: data) {
                     ScrollView { Image(uiImage: image).resizable().scaledToFit().padding() }
                 } else if ext == "pdf", let data {
@@ -224,13 +225,13 @@ private struct AFCRemoteFilePreview: View {
                             .padding()
                     }
                 } else {
-                    ContentUnavailableView("Önizləmə mümkün deyil", systemImage: "doc", description: Text("Bu format UTF-8 mətn, PDF və ya dəstəklənən şəkil deyil. Fayl xam məlumat kimi saxlanıla bilər."))
+                    VStack(spacing: 10) { Image(systemName: "doc").font(.largeTitle); Text("Önizləmə mümkün deyil").font(.headline); Text("Bu format UTF-8 mətn, PDF və ya dəstəklənən şəkil deyil.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding()
                 }
             }
             .navigationTitle(file.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Bağla") { dismiss() } }
+                ToolbarItem(placement: .navigationBarLeading) { Button("Bağla") { dismiss() } }
                 if let data {
                     ToolbarItem(placement: .topBarTrailing) {
                         ShareLink(item: FileTransfer(data: data, name: file.name), preview: SharePreview(file.name))
@@ -274,7 +275,7 @@ private struct PDFRemotePreview: View {
         if let document = PDFDocument(data: data) {
             PDFKitView(document: document)
         } else {
-            ContentUnavailableView("PDF açıla bilmədi", systemImage: "doc.richtext")
+            VStack { Image(systemName: "doc.richtext"); Text("PDF açıla bilmədi") }
         }
     }
 }

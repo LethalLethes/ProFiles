@@ -71,20 +71,23 @@ private final class WalletCardsModel: ObservableObject {
         isScanning = true
         status = "Apple Pay-i aç və kartına toxun…"
         let path = WalletCardStore.pairingPath
-        scanThread = Thread { [weak self] in
+        let callbackContext = Unmanaged.passRetained(self).toOpaque()
+        scanThread = Thread {
             var outError: UnsafeMutablePointer<CChar>?
             let rc = path.withCString { pairing in
-                al_syslog_stream_start(pairing, { _, line in
-                    guard let line else { return }
+                al_syslog_stream_start(pairing, { context, line in
+                    guard let context, let line else { return }
+                    let model = Unmanaged<WalletCardsModel>.fromOpaque(context).takeUnretainedValue()
                     let text = String(cString: line)
-                    DispatchQueue.main.async { self?.consume(text) }
-                }, nil, &outError)
+                    DispatchQueue.main.async { model.consume(text) }
+                }, callbackContext, &outError)
             }
             let message = outError.map { String(cString: $0) }
             if let outError { al_string_free(outError) }
+            Unmanaged<WalletCardsModel>.fromOpaque(callbackContext).release()
             DispatchQueue.main.async {
-                self?.isScanning = false
-                if rc != 0 { self?.error = message ?? "Wallet scan xətası: \(rc)" }
+                self.isScanning = false
+                if rc != 0 { self.error = message ?? "Wallet scan xətası: \(rc)" }
             }
         }
         scanThread?.name = "ProFiles.WalletScanner"
@@ -187,17 +190,19 @@ private final class WalletCardsModel: ObservableObject {
                         }
                         try? FileManager.default.removeItem(at: invalidation)
                     } else {
-                        await MainActor.run { self?.error = message ?? "Kart tətbiq edilə bilmədi (\(rc))." }
+                        await MainActor.run { model.error = message ?? "Kart tətbiq edilə bilmədi (\(rc))." }
                     }
                     try? FileManager.default.removeItem(at: stage)
                 } catch {
-                    await MainActor.run { self?.error = error.localizedDescription }
+                    await MainActor.run { model.error = error.localizedDescription }
                 }
-                await MainActor.run { self?.progress = Double(index + 1) / Double(selected.count) }
+                await MainActor.run { model.progress = Double(index + 1) / Double(selected.count) }
             }
+            let completedCount = successes
+            let totalCount = selected.count
             await MainActor.run {
-                self?.isApplying = false
-                self?.status = "\(successes)/\(selected.count) kart üçün dizayn tətbiq edildi. Wallet-i tam bağlayıb yenidən aç."
+                model.isApplying = false
+                model.status = "\(completedCount)/\(totalCount) kart üçün dizayn tətbiq edildi. Wallet-i tam bağlayıb yenidən aç."
             }
         }
     }

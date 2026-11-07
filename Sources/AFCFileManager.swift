@@ -285,8 +285,6 @@ private struct PDFRemotePreview: View {
     }
 }
 
-import PDFKit
-import UIKit
 
 private struct PDFKitView: UIViewRepresentable {
     let document: PDFDocument

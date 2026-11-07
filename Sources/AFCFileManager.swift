@@ -6,6 +6,7 @@ import PDFKit
 import QuickLook
 import UIKit
 import SQLite3
+import SQLite3
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -420,7 +421,7 @@ private struct SQLiteTablePreview: View {
                         Text("İlk 100 sətir").font(.caption).foregroundStyle(.secondary)
                         ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Sətir \\(index + 1)").font(.caption.bold())
+                                Text("Sətir \(index + 1)").font(.caption.bold())
                                 ForEach(Array(columns.enumerated()), id: \.offset) { columnIndex, column in
                                     HStack(alignment: .top) {
                                         Text(column).font(.caption.bold()).frame(width: 120, alignment: .leading)
@@ -450,7 +451,7 @@ private struct SQLiteTablePreview: View {
             }
             defer { sqlite3_close(db) }
             let safeName = table.replacingOccurrences(of: "\"", with: "\"\"")
-            let sql = "SELECT * FROM \"\\(safeName)\" LIMIT 100"
+            let sql = "SELECT * FROM \"\(safeName)\" LIMIT 100"
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
                 throw SQLitePreviewError(message: String(cString: sqlite3_errmsg(db)))

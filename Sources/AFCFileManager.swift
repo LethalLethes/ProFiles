@@ -1,8 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AirliftFFI
-import PDFKit
-import UIKit
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -58,7 +56,7 @@ private enum AFCBridge {
             if let error { al_string_free(error) }
         }
         guard rc == 0, let bytes else {
-            throw AFCBridgeError.invalidResult(error.map(String.init(cString:)) ?? "AFC oxuma xətası: \(rc)")
+            throw AFCBridgeError.invalidResult(error.map { String(cString: $0) } ?? "AFC oxuma xətası: \(rc)")
         }
         return Data(bytes: bytes, count: length)
     }
@@ -78,8 +76,7 @@ struct AFCFileManagerView: View {
                 if loading {
                     ProgressView("AFC qovluğu yüklənir…")
                 } else if entries.isEmpty {
-                    ContentUnavailableView("Boş qovluq", systemImage: "folder",
-                        description: Text("Bu AFC qovluğunda görünən element yoxdur."))
+                    VStack(spacing: 10) { Image(systemName: "folder").font(.largeTitle); Text("Boş qovluq").font(.headline); Text("Bu AFC qovluğunda görünən element yoxdur.").foregroundStyle(.secondary) }
                 } else {
                     List(entries) { entry in
                         if entry.isDirectory {
@@ -233,7 +230,7 @@ private struct AFCRemoteFilePreview: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Bağla") { dismiss() } }
                 if let data {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .navigationBarTrailing) {
                         ShareLink(item: FileTransfer(data: data, name: file.name), preview: SharePreview(file.name))
                     }
                 }

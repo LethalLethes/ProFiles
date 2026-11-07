@@ -5,10 +5,7 @@ import AVKit
 import PDFKit
 import QuickLook
 import UIKit
-import AVKit
-import PDFKit
-import QuickLook
-import UIKit
+import SQLite3
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -215,8 +212,13 @@ private struct AFCRemoteFilePreview: View {
 
     private var ext: String { URL(fileURLWithPath: file.name).pathExtension.lowercased() }
     private var isVideo: Bool { ["mov", "mp4", "m4v", "avi", "mkv", "3gp"].contains(ext) }
+    private var isSQLiteDatabase: Bool {
+        guard let data else { return ["sqlite", "sqlite3", "db"].contains(ext) }
+        return data.starts(with: Array("SQLite format 3\u{0}".utf8))
+            || ["sqlite", "sqlite3", "db"].contains(ext)
+    }
     private var textContent: String? {
-        guard let data else { return nil }
+        guard let data, !isSQLiteDatabase else { return nil }
         if ext == "plist",
            let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
            let xml = try? PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0) {
@@ -338,6 +340,159 @@ private struct QuickLookRemotePreview: UIViewControllerRepresentable {
             url as NSURL
         }
     }
+}
+
+private struct SQLiteDatabasePreview: View {
+    let url: URL
+    @State private var tables: [String] = []
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let errorMessage {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").font(.largeTitle)
+                    Text("SQLite bazası açıla bilmədi")
+                    Text(errorMessage).font(.caption).foregroundStyle(.secondary)
+                }.padding()
+            } else if tables.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "tablecells").font(.largeTitle)
+                    Text("Cədvəl tapılmadı")
+                    Text("Baza boş ola bilər və ya yalnız daxili obyektlər saxlayır.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding()
+            } else {
+                List(tables, id: \.self) { table in
+                    NavigationLink {
+                        SQLiteTablePreview(url: url, table: table)
+                    } label: {
+                        Label(table, systemImage: "tablecells")
+                    }
+                }
+            }
+        }
+        .task { loadTables() }
+    }
+
+    private func loadTables() {
+        do {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+                throw SQLitePreviewError(message: "SQLite faylı açıla bilmədi.")
+            }
+            defer { sqlite3_close(db) }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name", -1, &statement, nil) == SQLITE_OK,
+                  let statement else {
+                throw SQLitePreviewError(message: String(cString: sqlite3_errmsg(db)))
+            }
+            defer { sqlite3_finalize(statement) }
+            var found: [String] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if let value = sqlite3_column_text(statement, 0) {
+                    found.append(String(cString: value))
+                }
+            }
+            tables = found
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SQLiteTablePreview: View {
+    let url: URL
+    let table: String
+    @State private var columns: [String] = []
+    @State private var rows: [[String]] = []
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.red).padding()
+            } else if columns.isEmpty {
+                ProgressView("Cədvəl oxunur…")
+            } else {
+                ScrollView([.horizontal, .vertical]) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("İlk 100 sətir").font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Sətir \\(index + 1)").font(.caption.bold())
+                                ForEach(Array(columns.enumerated()), id: \.offset) { columnIndex, column in
+                                    HStack(alignment: .top) {
+                                        Text(column).font(.caption.bold()).frame(width: 120, alignment: .leading)
+                                        Text(columnIndex < row.count ? row[columnIndex] : "NULL")
+                                            .font(.system(.caption, design: .monospaced))
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                            .padding(8)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }.padding()
+                }
+            }
+        }
+        .navigationTitle(table)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { loadRows() }
+    }
+
+    private func loadRows() {
+        do {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+                throw SQLitePreviewError(message: "SQLite faylı açıla bilmədi.")
+            }
+            defer { sqlite3_close(db) }
+            let safeName = table.replacingOccurrences(of: "\"", with: "\"\"")
+            let sql = "SELECT * FROM \"\\(safeName)\" LIMIT 100"
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+                throw SQLitePreviewError(message: String(cString: sqlite3_errmsg(db)))
+            }
+            defer { sqlite3_finalize(statement) }
+            let count = Int(sqlite3_column_count(statement))
+            columns = (0..<count).map { index in
+                String(cString: sqlite3_column_name(statement, Int32(index)))
+            }
+            var result: [[String]] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                var row: [String] = []
+                for index in 0..<count {
+                    let type = sqlite3_column_type(statement, Int32(index))
+                    if type == SQLITE_NULL {
+                        row.append("NULL")
+                    } else if type == SQLITE_BLOB {
+                        let length = Int(sqlite3_column_bytes(statement, Int32(index)))
+                        if let blob = sqlite3_column_blob(statement, Int32(index)), length > 0 {
+                            let bytes = Data(bytes: blob, count: min(length, 256))
+                            row.append("BLOB: " + bytes.map { String(format: "%02X", $0) }.joined() + (length > 256 ? "…" : ""))
+                        } else {
+                            row.append("BLOB (0 bytes)")
+                        }
+                    } else if let value = sqlite3_column_text(statement, Int32(index)) {
+                        row.append(String(cString: value))
+                    } else {
+                        row.append("")
+                    }
+                }
+                result.append(row)
+            }
+            rows = result
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SQLitePreviewError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 private struct FileTransfer: Transferable {

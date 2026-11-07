@@ -5,6 +5,10 @@ import AVKit
 import PDFKit
 import QuickLook
 import UIKit
+import AVKit
+import PDFKit
+import QuickLook
+import UIKit
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -210,6 +214,7 @@ private struct AFCRemoteFilePreview: View {
     @State private var player: AVPlayer?
 
     private var ext: String { URL(fileURLWithPath: file.name).pathExtension.lowercased() }
+    private var isVideo: Bool { ["mov", "mp4", "m4v", "avi", "mkv", "3gp"].contains(ext) }
     private var textContent: String? {
         guard let data else { return nil }
         if ext == "plist",
@@ -223,9 +228,20 @@ private struct AFCRemoteFilePreview: View {
     var body: some View {
         NavigationStack {
             Group {
-                if loading { ProgressView("Fayl oxunur…") }
-                else if let errorMessage { VStack(spacing: 10) { Image(systemName: "exclamationmark.triangle").font(.largeTitle); Text("Fayl açıla bilmədi").font(.headline); Text(errorMessage).foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding() }
-                else if ["png","jpg","jpeg","heic","gif"].contains(ext), let data, let image = UIImage(data: data) {
+                if loading {
+                    ProgressView("Fayl oxunur…")
+                } else if let errorMessage {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle").font(.largeTitle)
+                        Text("Fayl açıla bilmədi").font(.headline)
+                        Text(errorMessage).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.padding()
+                } else if isVideo, let player {
+                    VideoPlayer(player: player)
+                        .onAppear { player.play() }
+                        .onDisappear { player.pause() }
+                } else if ["png", "jpg", "jpeg", "heic", "gif", "webp", "tif", "tiff", "bmp"].contains(ext),
+                          let data, let image = UIImage(data: data) {
                     ScrollView { Image(uiImage: image).resizable().scaledToFit().padding() }
                 } else if ext == "pdf", let data {
                     PDFRemotePreview(data: data)
@@ -237,8 +253,15 @@ private struct AFCRemoteFilePreview: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding()
                     }
+                } else if let localPreviewURL {
+                    QuickLookRemotePreview(url: localPreviewURL)
                 } else {
-                    VStack(spacing: 10) { Image(systemName: "doc").font(.largeTitle); Text("Önizləmə mümkün deyil").font(.headline); Text("Bu format UTF-8 mətn, PDF və ya dəstəklənən şəkil deyil.").foregroundStyle(.secondary).multilineTextAlignment(.center) }.padding()
+                    VStack(spacing: 10) {
+                        Image(systemName: "doc").font(.largeTitle)
+                        Text("Önizləmə mümkün deyil").font(.headline)
+                        Text("Faylı paylaş düyməsi ilə başqa tətbiqdə aça bilərsən.")
+                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.padding()
                 }
             }
             .navigationTitle(file.name)
@@ -256,18 +279,35 @@ private struct AFCRemoteFilePreview: View {
     }
 
     private func load() {
+        let remotePath = file.path
+        let fileName = file.name
+        let video = isVideo
         Task.detached(priority: .userInitiated) {
             do {
-                let result = try AFCBridge.read(file.path)
-                await MainActor.run { data = result; loading = false }
+                let result = try AFCBridge.read(remotePath)
+                let suffix = URL(fileURLWithPath: fileName).pathExtension
+                let previewURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension(suffix.isEmpty ? "bin" : suffix)
+                try result.write(to: previewURL, options: .atomic)
+                await MainActor.run {
+                    data = result
+                    localPreviewURL = previewURL
+                    if video { player = AVPlayer(url: previewURL) }
+                    loading = false
+                }
             } catch {
-                await MainActor.run { errorMessage = error.localizedDescription; loading = false }
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    loading = false
+                }
             }
         }
     }
 
     private func prettyText(_ value: String) -> String {
-        guard ext == "json", let object = try? JSONSerialization.jsonObject(with: Data(value.utf8)),
+        guard ext == "json",
+              let object = try? JSONSerialization.jsonObject(with: Data(value.utf8)),
               let formatted = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
               let result = String(data: formatted, encoding: .utf8) else { return value }
         return result

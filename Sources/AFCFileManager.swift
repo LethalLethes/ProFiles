@@ -202,7 +202,15 @@ private struct AFCRemoteFilePreview: View {
     @State private var loading = true
 
     private var ext: String { URL(fileURLWithPath: file.name).pathExtension.lowercased() }
-    private var textContent: String? { data.flatMap { String(data: $0, encoding: .utf8) } }
+    private var textContent: String? {
+        guard let data else { return nil }
+        if ext == "plist",
+           let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+           let xml = try? PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0) {
+            return String(data: xml, encoding: .utf8)
+        }
+        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16)
+    }
 
     var body: some View {
         NavigationStack {

@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import AirliftFFI
 import QuickLook
 
-private struct AFCEntry: Identifiable, Hashable {
+private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
     let isDirectory: Bool
     var id: String { name }
@@ -41,8 +41,7 @@ private enum AFCBridge {
             throw AFCBridgeError.invalidResult(error.map(String.init(cString:)) ?? "AFC siyahılama xətası: \(rc)")
         }
         let data = Data(String(cString: json).utf8)
-        let names = (try JSONSerialization.jsonObject(with: data) as? [String]) ?? []
-        return names.map { AFCEntry(name: $0, isDirectory: false) }
+        return try JSONDecoder().decode([AFCEntry].self, from: data)
     }
 
     static func read(_ path: String) throws -> Data {

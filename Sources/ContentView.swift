@@ -163,31 +163,71 @@ private struct PairingFileStore {
 }
 
 private struct AirliftExplorerView: View {
+    @State private var showingReportPicker = false
+    @State private var reportName = "Hesabat seçilməyib"
+    @State private var reportSummary = "Airlift nəticə hesabatını JSON və ya mətn faylı kimi import edə bilərsən."
+    @State private var reportLoaded = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     ModuleHeader(
                         title: "Airlift Explorer",
-                        subtitle: "Airlift əməliyyatlarının faktiki təqdim etdiyi fayllar üçün bölmə.",
+                        subtitle: "Airlift testlərinin nəticə və canary hesabatları.",
                         symbol: "arrow.triangle.branch"
                     )
                     StatusCard(
-                        title: "Airlift adapteri qoşulmayıb",
-                        detail: "Bu modul ayrıca Airlift bağlantı adapteri tələb edir. Adapter qoşulmadan fayl siyahısı göstərilmir.",
-                        symbol: "info.circle"
+                        title: reportLoaded ? "Hesabat yükləndi" : "Hesabat gözlənilir",
+                        detail: reportSummary,
+                        symbol: reportLoaded ? "checkmark.circle.fill" : "doc.text.magnifyingglass"
                     )
+                    Text(reportName)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        showingReportPicker = true
+                    } label: {
+                        Label("Airlift hesabatını import et", systemImage: "doc.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
                     StatusCard(
-                        title: "Giriş məhdudiyyəti",
-                        detail: "Yalnız uğurla təsdiqlənmiş əməliyyat nəticələri göstəriləcək.",
+                        title: "Exploit avtomatik başladılmır",
+                        detail: "Bu bölmə yalnız sənin təqdim etdiyin test hesabatını oxuyur. Canary nəticəsi exploit-in ümumi sistem fayllarına giriş verdiyini sübut etmir.",
                         symbol: "lock.shield"
                     )
                 }
                 .padding()
             }
-            .navigationTitle("ProFiles")
+            .navigationTitle("Airlift")
+            .sheet(isPresented: $showingReportPicker) {
+                PairingDocumentPicker(
+                    onPick: { url in
+                        do {
+                            let data = try readScopedData(from: url)
+                            let text = String(data: data, encoding: .utf8) ?? "Mətn formatında olmayan hesabat."
+                            reportName = url.lastPathComponent
+                            reportSummary = "Fayl: \(data.count) bayt. " + String(text.prefix(500))
+                            reportLoaded = true
+                        } catch {
+                            reportSummary = "Hesabat oxunmadı: \(error.localizedDescription)"
+                            reportLoaded = false
+                        }
+                        showingReportPicker = false
+                    },
+                    onCancel: { showingReportPicker = false }
+                )
+                .ignoresSafeArea()
+            }
         }
     }
+}
+
+private func readScopedData(from url: URL) throws -> Data {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    return try Data(contentsOf: url)
 }
 
 private struct AFCExplorerView: View {
@@ -287,29 +327,70 @@ private struct AFCExplorerView: View {
 }
 
 private struct CoreMediaLabView: View {
+    @State private var showingLogPicker = false
+    @State private var logName = "Crash log seçilməyib"
+    @State private var logSummary = "CoreMedia və ya panic log faylını seçərək diaqnostika edə bilərsən."
+    @State private var logLoaded = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     ModuleHeader(
                         title: "CoreMedia Lab",
-                        subtitle: "CoreMedia testləri və diaqnostika üçün ayrıca bölmə.",
+                        subtitle: "Cihaz məlumatı və crash/panic log diaqnostikası.",
                         symbol: "waveform"
                     )
                     StatusCard(
-                        title: "Test icra edilməyib",
-                        detail: "Burada test nəticələri, cihaz build-i və xəta qeydləri göstəriləcək.",
-                        symbol: "testtube.2"
+                        title: "Cihaz",
+                        detail: "Model: \(UIDevice.current.model)\n iOS: \(UIDevice.current.systemVersion)",
+                        symbol: "iphone"
                     )
                     StatusCard(
-                        title: "Fayl meneceri deyil",
-                        detail: "CoreMedia test nəticəsi öz-özlüyündə fayl sistemi icazəsi yaratmır.",
-                        symbol: "exclamationmark.shield"
+                        title: logLoaded ? "Log yükləndi" : "Log gözlənilir",
+                        detail: logSummary,
+                        symbol: logLoaded ? "checkmark.circle.fill" : "doc.text.magnifyingglass"
+                    )
+                    Text(logName)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        showingLogPicker = true
+                    } label: {
+                        Label("Crash / panic log seç", systemImage: "doc.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    StatusCard(
+                        title: "Təhlükəsiz analiz",
+                        detail: "Log faylı yalnız oxunur. CoreMedia PoC avtomatik işə salınmır və bu modul fayl sistemi icazəsi yaratmır.",
+                        symbol: "lock.shield"
                     )
                 }
                 .padding()
             }
             .navigationTitle("CoreMedia Lab")
+            .sheet(isPresented: $showingLogPicker) {
+                PairingDocumentPicker(
+                    onPick: { url in
+                        do {
+                            let data = try readScopedData(from: url)
+                            let content = String(data: data, encoding: .utf8) ?? "Log UTF-8 mətn deyil."
+                            let lines = content.components(separatedBy: .newlines)
+                            let preview = lines.prefix(8).joined(separator: "\n")
+                            logName = url.lastPathComponent
+                            logSummary = "Ölçü: \(data.count) bayt.\n\(preview.prefix(700))"
+                            logLoaded = true
+                        } catch {
+                            logSummary = "Log oxunmadı: \(error.localizedDescription)"
+                            logLoaded = false
+                        }
+                        showingLogPicker = false
+                    },
+                    onCancel: { showingLogPicker = false }
+                )
+                .ignoresSafeArea()
+            }
         }
     }
 }

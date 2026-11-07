@@ -122,7 +122,7 @@ struct AFCFileManagerView: View {
     private func child(_ name: String) -> String { path == "/" ? "/" + name : path + "/" + name }
     private func icon(for name: String) -> String {
         switch URL(fileURLWithPath: name).pathExtension.lowercased() {
-        case "txt", "log", "md", "json", "xml", "plist", "swift", "c", "h", "py", "csv": return "doc.text"
+        case "txt", "log", "md", "json", "xml", "plist", "swift", "c", "h", "py", "csv", "sql", "ini", "conf", "yaml", "yml", "html", "css", "js", "sh", "toml": return "doc.text"
         case "pdf": return "doc.richtext"
         case "png", "jpg", "jpeg", "heic", "gif", "webp", "tif", "tiff", "bmp": return "photo"
         case "mov", "mp4", "m4v", "avi", "mkv", "3gp": return "film"
@@ -167,7 +167,7 @@ private struct AFCFileManagerViewAtPath: View {
                 VStack(spacing: 10) {
                     Image(systemName: "folder").font(.largeTitle)
                     Text("Bu qovluqda görünən fayl yoxdur").font(.headline)
-                    Text("AFC yolu: \\(path)").font(.caption).foregroundStyle(.secondary)
+                    Text("AFC yolu: \(path)").font(.caption).foregroundStyle(.secondary)
                     Button("Yenilə") { load() }.buttonStyle(.bordered)
                 }.padding()
             } else {
@@ -245,7 +245,11 @@ private struct AFCRemoteFilePreview: View {
            let xml = try? PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0) {
             return String(data: xml, encoding: .utf8)
         }
-        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16)
+        if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]) {
+            return String(data: data, encoding: .utf16)
+        }
+        return nil
     }
 
     var body: some View {
@@ -276,8 +280,8 @@ private struct AFCRemoteFilePreview: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding()
                     }
-                } else if let localPreviewURL {
-                    QuickLookRemotePreview(url: localPreviewURL)
+                } else if let localPreviewURL, let data {
+                    UnknownFormatPreview(url: localPreviewURL, data: data)
                 } else {
                     VStack(spacing: 10) {
                         Image(systemName: "doc").font(.largeTitle)
@@ -337,6 +341,56 @@ private struct AFCRemoteFilePreview: View {
     }
 }
 
+private struct UnknownFormatPreview: View {
+    let url: URL
+    let data: Data
+    @State private var mode = "preview"
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Görüntüləmə", selection: $mode) {
+                Text("Önizləmə").tag("preview")
+                Text("HEX").tag("hex")
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            if mode == "preview" {
+                QuickLookRemotePreview(url: url)
+            } else {
+                HexDataPreview(data: data)
+            }
+        }
+    }
+}
+
+private struct HexDataPreview: View {
+    let data: Data
+    private var rows: [String] {
+        stride(from: 0, to: min(data.count, 8192), by: 16).map { offset in
+            let chunk = data[offset..<min(offset + 16, data.count)]
+            let hex = chunk.map { String(format: "%02X", $0) }.joined(separator: " ")
+            let ascii = chunk.map { byte -> Character in
+                (byte >= 32 && byte < 127) ? Character(UnicodeScalar(byte)) : "."
+            }
+            return String(format: "%08X", offset) + "  " + hex.padding(toLength: 47, withPad: " ", startingAt: 0) + "  " + String(ascii)
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Fayl ölçüsü: \(data.count) bayt").font(.caption).foregroundStyle(.secondary)
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                }
+                if data.count > 8192 {
+                    Text("İlk 8 KB göstərilir. Tam fayl paylaşma düyməsi ilə ixrac edilə bilər.")
+                        .font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+                }
+            }.padding().frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
 private struct QuickLookRemotePreview: UIViewControllerRepresentable {
     let url: URL
 

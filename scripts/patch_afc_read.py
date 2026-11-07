@@ -154,3 +154,95 @@ void al_buffer_free(char *p);
     header_path.write_text(header)
 
 print("AFC read-file FFI patch applied.")
+
+
+# AFC file-manager write and delete APIs (restricted to the paired AFC namespace).
+if "pub unsafe fn afc_write_file(" not in src:
+    anchor = "// Public FFI entry point"
+    code = r"""
+pub unsafe fn afc_write_file(pairing_path: *const c_char, remote_path: *const c_char,
+    data: *const u8, data_len: usize, out_error: *mut *mut c_char) -> i32 {
+    if data.is_null() && data_len > 0 { if !out_error.is_null() { *out_error = cstr("Missing data."); } return 1; }
+    let pairing_path = opt_str(pairing_path, "airlift_pairing.plist");
+    let remote_path = opt_str(remote_path, "");
+    if !remote_path.starts_with('/') || remote_path == "/" || remote_path.split('/').any(|p| p == "." || p == "..") {
+        if !out_error.is_null() { *out_error = cstr("Invalid AFC path."); } return 1;
+    }
+    let bytes = if data_len == 0 { Vec::new() } else { std::slice::from_raw_parts(data, data_len).to_vec() };
+    let result = crate::ffi_util::run_with_large_stack("afc_write_file", move || {
+        idevice_ffi::run_sync_local(async move {
+            let pairing = std::fs::read(&pairing_path).map_err(|e| format!("Pairing file: {e}"))?;
+            let logger = Logger { cb: None, ctx: std::ptr::null_mut() };
+            let mut tunnel = connect_tunnel(&pairing, &logger).await?;
+            let mut afc = tunnel.connect_afc(&logger).await?;
+            let mut file = afc.open(&remote_path, AfcFopenMode::WrOnly).await.map_err(|e| format!("AFC open: {e:?}"))?;
+            file.write_entire(&bytes).await.map_err(|e| format!("AFC write: {e:?}"))?;
+            file.close().await.map_err(|e| format!("AFC close: {e:?}"))?;
+            Ok::<(), String>(())
+        })
+    });
+    match result { Ok(Ok(())) => 0, Ok(Err(e)) | Err(e) => { if !out_error.is_null() { *out_error = cstr(e); } 1 } }
+}
+
+pub unsafe fn afc_delete_path(pairing_path: *const c_char, remote_path: *const c_char,
+    recursive: i32, out_error: *mut *mut c_char) -> i32 {
+    let pairing_path = opt_str(pairing_path, "airlift_pairing.plist");
+    let remote_path = opt_str(remote_path, "");
+    if !remote_path.starts_with('/') || remote_path == "/" || remote_path.split('/').any(|p| p == "." || p == "..") {
+        if !out_error.is_null() { *out_error = cstr("Invalid AFC path; root deletion is forbidden."); } return 1;
+    }
+    let result = crate::ffi_util::run_with_large_stack("afc_delete_path", move || {
+        idevice_ffi::run_sync_local(async move {
+            let pairing = std::fs::read(&pairing_path).map_err(|e| format!("Pairing file: {e}"))?;
+            let logger = Logger { cb: None, ctx: std::ptr::null_mut() };
+            let mut tunnel = connect_tunnel(&pairing, &logger).await?;
+            let mut afc = tunnel.connect_afc(&logger).await?;
+            if recursive != 0 { afc.remove_all(&remote_path).await.map_err(|e| format!("AFC delete: {e:?}"))?; }
+            else { afc.remove(&remote_path).await.map_err(|e| format!("AFC delete: {e:?}"))?; }
+            Ok::<(), String>(())
+        })
+    });
+    match result { Ok(Ok(())) => 0, Ok(Err(e)) | Err(e) => { if !out_error.is_null() { *out_error = cstr(e); } 1 } }
+}
+"""
+    if anchor not in src: raise SystemExit("AFC insertion anchor missing")
+    src = src.replace(anchor, code + "\n" + anchor, 1)
+    exploit_path.write_text(src)
+
+lib = lib_path.read_text()
+if "al_afc_write_file(" not in lib:
+    anchor = "// ---------------------------------------------------------------------------\n// Exploit file operations"
+    code = r"""
+#[no_mangle]
+pub unsafe extern "C" fn al_afc_write_file(pairing_path: *const c_char, remote_path: *const c_char,
+    data: *const u8, data_len: usize, out_error: *mut *mut c_char) -> i32 {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| exploit::afc_write_file(pairing_path, remote_path, data, data_len, out_error))) {
+        Ok(rc) => rc, Err(e) => { if !out_error.is_null() { *out_error = ffi_util::cstr(format!("Rust panic: {e:?}")); } 1 }
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn al_afc_delete_path(pairing_path: *const c_char, remote_path: *const c_char,
+    recursive: i32, out_error: *mut *mut c_char) -> i32 {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| exploit::afc_delete_path(pairing_path, remote_path, recursive, out_error))) {
+        Ok(rc) => rc, Err(e) => { if !out_error.is_null() { *out_error = ffi_util::cstr(format!("Rust panic: {e:?}")); } 1 }
+    }
+}
+"""
+    if anchor not in lib: raise SystemExit("lib.rs insertion anchor missing")
+    lib = lib.replace(anchor, code + "\n" + anchor, 1)
+    lib_path.write_text(lib)
+
+header = header_path.read_text()
+if "al_afc_write_file(" not in header:
+    anchor = "// Run the AirTraffic sandbox escape."
+    decl = """int32_t al_afc_write_file(const char *pairing_path, const char *remote_path,
+    const uint8_t *data, size_t data_len, char **out_error);
+int32_t al_afc_delete_path(const char *pairing_path, const char *remote_path,
+    int32_t recursive, char **out_error);
+
+"""
+    if anchor not in header: raise SystemExit("header insertion anchor missing")
+    header = header.replace(anchor, decl + anchor, 1)
+    header_path.write_text(header)
+
+print("AFC read/write/delete FFI patch applied.")

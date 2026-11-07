@@ -65,6 +65,32 @@ private enum AFCBridge {
         }
         return Data(bytes: bytes, count: length)
     }
+
+    static func write(_ data: Data, to path: String) throws {
+        guard path.hasPrefix("/"), path != "/", !path.split(separator: "/").contains("..") else {
+            throw AFCBridgeError.invalidResult("Yanlış AFC yolu.")
+        }
+        var error: UnsafeMutablePointer<CChar>?
+        let rc = pairingPath.withCString { p in path.withCString { r in
+            data.withUnsafeBytes { raw in
+                al_afc_write_file(p, r, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, &error)
+            }
+        }}
+        defer { if let error { al_string_free(error) } }
+        guard rc == 0 else { throw AFCBridgeError.invalidResult(error.map { String(cString: $0) } ?? "AFC yazma xətası: \\(rc)") }
+    }
+
+    static func delete(_ path: String, directory: Bool) throws {
+        guard path.hasPrefix("/"), path != "/", !path.split(separator: "/").contains("..") else {
+            throw AFCBridgeError.invalidResult("Kök qovluq silinə bilməz.")
+        }
+        var error: UnsafeMutablePointer<CChar>?
+        let rc = pairingPath.withCString { p in path.withCString { r in
+            al_afc_delete_path(p, r, directory ? 1 : 0, &error)
+        }}
+        defer { if let error { al_string_free(error) } }
+        guard rc == 0 else { throw AFCBridgeError.invalidResult(error.map { String(cString: $0) } ?? "AFC silmə xətası: \\(rc)") }
+    }
 }
 
 struct AFCFileManagerView: View {
@@ -74,6 +100,9 @@ struct AFCFileManagerView: View {
     @State private var errorMessage: String?
     @State private var selectedFile: RemoteFile?
     @State private var refreshID = UUID()
+    @State private var showImporter = false
+    @State private var pendingDelete: AFCEntry?
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -89,13 +118,15 @@ struct AFCFileManagerView: View {
                                 AFCFileManagerViewAtPath(path: child(entry.name))
                             } label: {
                                 Label(entry.name, systemImage: "folder")
+                                    .contextMenu { Button("Qovluğu sil", role: .destructive) { pendingDelete = entry; showDeleteConfirmation = true } }
                             }
                         } else {
                             Button {
                                 selectedFile = RemoteFile(path: child(entry.name), name: entry.name)
                             } label: {
                                 Label(entry.name, systemImage: icon(for: entry.name))
-                                    .foregroundStyle(.primary)
+                                     .foregroundStyle(.primary)
+                                    .contextMenu { Button("Sil", role: .destructive) { pendingDelete = entry; showDeleteConfirmation = true } }
                             }
                         }
                     }
@@ -105,20 +136,45 @@ struct AFCFileManagerView: View {
             .navigationTitle(path == "/" ? "AFC Files" : URL(fileURLWithPath: path).lastPathComponent)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button { showImporter = true } label: { Image(systemName: "plus") }
                     Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
                 }
             }
             .task(id: refreshID) { load() }
-            .sheet(item: $selectedFile) { file in
+             .sheet(item: $selectedFile) { file in
                 AFCRemoteFilePreview(file: file)
             }
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in importFiles(result) }
+            .confirmationDialog("Seçilmiş faylı silmək istəyirsən?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+                Button("Sil", role: .destructive) { if let entry = pendingDelete { performDelete(entry) } }
+                Button("Ləğv et", role: .cancel) { pendingDelete = nil }
+            } message: { Text(pendingDelete?.name ?? "") }
             .alert("AFC", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("Bağla", role: .cancel) {}
             } message: { Text(errorMessage ?? "") }
         }
     }
 
+    private func importFiles(_ result: Result<[URL], Error>) {
+        do {
+            for url in try result.get() {
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                try AFCBridge.write(Data(contentsOf: url), to: child(url.lastPathComponent))
+            }
+            load()
+        } catch { errorMessage = error.localizedDescription }
+    }
+    private func performDelete(_ entry: AFCEntry) {
+        let target = child(entry.name)
+        Task.detached {
+            do {
+                try AFCBridge.delete(target, directory: entry.isDirectory)
+                await MainActor.run { pendingDelete = nil; load() }
+            } catch { await MainActor.run { errorMessage = error.localizedDescription } }
+        }
+    }
     private func child(_ name: String) -> String { path == "/" ? "/" + name : path + "/" + name }
     private func icon(for name: String) -> String {
         switch URL(fileURLWithPath: name).pathExtension.lowercased() {
@@ -158,6 +214,9 @@ private struct AFCFileManagerViewAtPath: View {
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var selectedFile: RemoteFile?
+    @State private var showImporter = false
+    @State private var pendingDelete: AFCEntry?
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         Group {
@@ -177,12 +236,14 @@ private struct AFCFileManagerViewAtPath: View {
                             AFCFileManagerViewAtPath(path: child(entry.name))
                         } label: {
                             Label(entry.name, systemImage: "folder")
+                                    .contextMenu { Button("Qovluğu sil", role: .destructive) { pendingDelete = entry; showDeleteConfirmation = true } }
                         }
                     } else {
                         Button {
                             selectedFile = RemoteFile(path: child(entry.name), name: entry.name)
                         } label: {
                             Label(entry.name, systemImage: "doc")
+                                .contextMenu { Button("Sil", role: .destructive) { pendingDelete = entry; showDeleteConfirmation = true } }
                         }.foregroundStyle(.primary)
                     }
                 }
@@ -191,18 +252,42 @@ private struct AFCFileManagerViewAtPath: View {
         .navigationTitle(URL(fileURLWithPath: path).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { load() } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(loading)
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button { showImporter = true } label: { Image(systemName: "plus") }
+                Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
             }
         }
         .task { load() }
-        .sheet(item: $selectedFile) { AFCRemoteFilePreview(file: $0) }
+         .sheet(item: $selectedFile) { AFCRemoteFilePreview(file: $0) }
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in importFiles(result) }
+        .confirmationDialog("Seçilmiş faylı silmək istəyirsən?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Sil", role: .destructive) { if let entry = pendingDelete { performDelete(entry) } }
+            Button("Ləğv et", role: .cancel) { pendingDelete = nil }
+        } message: { Text(pendingDelete?.name ?? "") }
         .alert("AFC", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("Bağla", role: .cancel) {}
         } message: { Text(errorMessage ?? "") }
     }
     private func child(_ name: String) -> String { path == "/" ? "/" + name : path + "/" + name }
+    private func importFiles(_ result: Result<[URL], Error>) {
+        do {
+            for url in try result.get() {
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                try AFCBridge.write(Data(contentsOf: url), to: child(url.lastPathComponent))
+            }
+            load()
+        } catch { errorMessage = error.localizedDescription }
+    }
+    private func performDelete(_ entry: AFCEntry) {
+        let target = child(entry.name)
+        Task.detached {
+            do {
+                try AFCBridge.delete(target, directory: entry.isDirectory)
+                await MainActor.run { pendingDelete = nil; load() }
+            } catch { await MainActor.run { errorMessage = error.localizedDescription } }
+        }
+    }
     private func load() {
         loading = true
         Task.detached {

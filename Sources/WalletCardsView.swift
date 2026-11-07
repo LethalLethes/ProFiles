@@ -172,7 +172,7 @@ private final class WalletCardsModel: ObservableObject {
                             .appendingPathComponent("profiles-wallet-cache-\(UUID().uuidString)", isDirectory: true)
                         try? FileManager.default.createDirectory(at: invalidation, withIntermediateDirectories: true)
                         for leaf in ["FrontFace", "Preview", "PlaceHolder"] {
-                            try? Data("refresh".utf8).write(to: invalidation.appendingPathComponent(leaf))
+                            try? Data("corrupted".utf8).write(to: invalidation.appendingPathComponent(leaf))
                         }
                         for ext in [".cache", ".pkcache"] {
                             var ignored: UnsafeMutablePointer<CChar>?
@@ -268,8 +268,12 @@ struct WalletCardsView: View {
                 }.padding(.horizontal)
 
                 if model.cards.isEmpty {
-                    ContentUnavailableView("Kart tapılmayıb", systemImage: "creditcard",
-                                            description: Text("Scan düyməsinə bas, sonra Apple Pay-də kartını aç."))
+                    VStack(spacing: 12) {
+                        Image(systemName: "creditcard").font(.system(size: 42)).foregroundStyle(.secondary)
+                        Text("Kart tapılmayıb").font(.headline)
+                        Text("Scan düyməsinə bas, sonra Apple Pay-də kartını aç.")
+                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity).padding()
                 } else {
                     List {
                         ForEach(model.cards) { card in
@@ -350,8 +354,8 @@ private struct WalletArtworkEditor: View {
     let image: UIImage
     let onSave: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var zoom: CGFloat = 1
-    @State private var zoomStart: CGFloat = 1
+    @State private var zoom: Double = 1
+    @State private var zoomStart: Double = 1
     @State private var offset: CGSize = .zero
     @State private var dragStart: CGSize = .zero
 
@@ -366,7 +370,7 @@ private struct WalletArtworkEditor: View {
                     Image(uiImage: image)
                         .resizable()
                         .frame(width: image.size.width * base, height: image.size.height * base)
-                        .scaleEffect(zoom)
+                        .scaleEffect(CGFloat(zoom))
                         .offset(offset)
                         .frame(width: size.width, height: size.height)
                         .clipped()
@@ -409,8 +413,8 @@ private struct WalletArtworkEditor: View {
             UIColor.black.setFill()
             context.fill(CGRect(origin: .zero, size: size))
             let base = max(size.width / image.size.width, size.height / image.size.height)
-            let w = image.size.width * base * zoom
-            let h = image.size.height * base * zoom
+            let w = image.size.width * base * CGFloat(zoom)
+            let h = image.size.height * base * CGFloat(zoom)
             let factorX = size.width / max(UIScreen.main.bounds.width - 32, 1)
             let factorY = size.height / max((UIScreen.main.bounds.width - 32) / 1.586, 1)
             let rect = CGRect(x: (size.width - w) / 2 + offset.width * factorX,

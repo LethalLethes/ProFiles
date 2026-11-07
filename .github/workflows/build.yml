@@ -15,6 +15,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Checkout AFC transport source
+        run: |
+          git clone --depth 1 https://github.com/TheShad0w777/AirCard-iOS.git AirCard-iOS
+          python3 scripts/patch_afc_read.py
+
+      - name: Build AFC transport framework
+        run: |
+          export IPHONEOS_DEPLOYMENT_TARGET=16.0
+          bash AirCard-iOS/build-ios.sh
+          cp -R AirCard-iOS/AirliftFFI.xcframework ./AirliftFFI.xcframework
+
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer

@@ -270,6 +270,8 @@ private struct AFCRemoteFilePreview: View {
                 } else if ["png", "jpg", "jpeg", "heic", "gif", "webp", "tif", "tiff", "bmp"].contains(ext),
                           let data, let image = UIImage(data: data) {
                     ScrollView { Image(uiImage: image).resizable().scaledToFit().padding() }
+                } else if isSQLiteDatabase, let localPreviewURL {
+                    SQLiteDatabasePreview(url: localPreviewURL)
                 } else if ext == "pdf", let data {
                     PDFRemotePreview(data: data)
                 } else if let textContent {

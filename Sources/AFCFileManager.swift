@@ -1,6 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AirliftFFI
+import AVKit
+import PDFKit
+import QuickLook
+import UIKit
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -119,7 +123,9 @@ struct AFCFileManagerView: View {
         switch URL(fileURLWithPath: name).pathExtension.lowercased() {
         case "txt", "log", "md", "json", "xml", "plist", "swift", "c", "h", "py", "csv": return "doc.text"
         case "pdf": return "doc.richtext"
-        case "png", "jpg", "jpeg", "heic", "gif": return "photo"
+        case "png", "jpg", "jpeg", "heic", "gif", "webp", "tif", "tiff", "bmp": return "photo"
+        case "mov", "mp4", "m4v", "avi", "mkv", "3gp": return "film"
+        case "mp3", "m4a", "wav", "aac", "flac", "caf": return "waveform"
         default: return "doc"
         }
     }
@@ -200,6 +206,8 @@ private struct AFCRemoteFilePreview: View {
     @State private var data: Data?
     @State private var errorMessage: String?
     @State private var loading = true
+    @State private var localPreviewURL: URL?
+    @State private var player: AVPlayer?
 
     private var ext: String { URL(fileURLWithPath: file.name).pathExtension.lowercased() }
     private var textContent: String? {
@@ -263,6 +271,32 @@ private struct AFCRemoteFilePreview: View {
               let formatted = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
               let result = String(data: formatted, encoding: .utf8) else { return value }
         return result
+    }
+}
+
+private struct QuickLookRemotePreview: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        context.coordinator.url = url
+        controller.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+            url as NSURL
+        }
     }
 }
 

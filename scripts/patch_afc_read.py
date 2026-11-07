@@ -106,7 +106,7 @@ pub unsafe fn afc_read_file(
 
 lib = lib_path.read_text()
 if "al_afc_read_file(" not in lib:
-    anchor = "// ---------------------------------------------------------------------------\n// Exploit file operations"
+    anchor = "// ---------------------------------------------------------------------------\n// AFC File Manager"
     if anchor not in lib:
         raise SystemExit("AFC FFI insertion anchor not found in lib.rs")
     code = r'''

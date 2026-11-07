@@ -76,6 +76,50 @@ private struct StatusCard: View {
     }
 }
 
+private struct PairingDocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let plistType = UTType(filenameExtension: "plist") ?? .propertyList
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [plistType, .data],
+            asCopy: true
+        )
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL) -> Void
+        let onCancel: () -> Void
+
+        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+            self.onPick = onPick
+            self.onCancel = onCancel
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else {
+                onCancel()
+                return
+            }
+            onPick(url)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCancel()
+        }
+    }
+}
+
 private struct PairingFileStore {
     static var destinationURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -147,7 +191,7 @@ private struct AirliftExplorerView: View {
 }
 
 private struct AFCExplorerView: View {
-    @State private var showingImporter = false
+    @State private var showingPicker = false
     @State private var pairingReady = PairingFileStore.exists
     @State private var statusMessage = PairingFileStore.exists
         ? "Pairing faylı tətbiqdə saxlanılıb."
@@ -171,7 +215,7 @@ private struct AFCExplorerView: View {
                     )
 
                     Button {
-                        showingImporter = true
+                        showingPicker = true
                     } label: {
                         Label(
                             pairingReady ? "Pairing faylını dəyiş" : "Pairing faylı seç",
@@ -213,26 +257,25 @@ private struct AFCExplorerView: View {
                 .padding()
             }
             .navigationTitle("AFC Explorer")
-            .fileImporter(
-                isPresented: $showingImporter,
-                allowedContentTypes: [.item],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else { return }
-                    do {
-                        try PairingFileStore.importFile(from: url)
-                        pairingReady = true
-                        statusMessage = "Pairing faylı ProFiles daxilində saxlanıldı."
-                    } catch {
-                        statusMessage = "Fayl oxunmadı: \\(error.localizedDescription)"
-                        showingError = true
+            .sheet(isPresented: $showingPicker) {
+                PairingDocumentPicker(
+                    onPick: { url in
+                        do {
+                            try PairingFileStore.importFile(from: url)
+                            pairingReady = true
+                            statusMessage = "Pairing faylı uğurla import edildi."
+                        } catch {
+                            statusMessage = "Import xətası: \(error.localizedDescription)"
+                            showingError = true
+                        }
+                        showingPicker = false
+                    },
+                    onCancel: {
+                        statusMessage = "Fayl seçimi ləğv edildi."
+                        showingPicker = false
                     }
-                case .failure(let error):
-                    statusMessage = "Seçim ləğv edildi və ya uğursuz oldu: \\(error.localizedDescription)"
-                    showingError = true
-                }
+                )
+                .ignoresSafeArea()
             }
             .alert("AFC Explorer", isPresented: $showingError) {
                 Button("Bağla", role: .cancel) { }

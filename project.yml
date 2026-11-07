@@ -14,6 +14,9 @@ targets:
     platform: iOS
     sources:
       - Sources
+    dependencies:
+      - framework: AirliftFFI.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.procreations.profiles

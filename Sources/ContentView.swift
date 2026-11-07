@@ -180,27 +180,6 @@ private struct AFCExplorerView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .fileImporter(
-                        isPresented: $showingImporter,
-                        allowedContentTypes: [.item],
-                        allowsMultipleSelection: false
-                    ) { result in
-                        switch result {
-                        case .success(let urls):
-                            guard let url = urls.first else { return }
-                            do {
-                                try PairingFileStore.importFile(from: url)
-                                pairingReady = true
-                                statusMessage = "Pairing faylı ProFiles daxilində saxlanıldı."
-                            } catch {
-                                statusMessage = error.localizedDescription
-                                showingError = true
-                            }
-                        case .failure(let error):
-                            statusMessage = error.localizedDescription
-                            showingError = true
-                        }
-                    }
 
                     if pairingReady {
                         Button(role: .destructive) {
@@ -234,6 +213,27 @@ private struct AFCExplorerView: View {
                 .padding()
             }
             .navigationTitle("AFC Explorer")
+            .fileImporter(
+                isPresented: $showingImporter,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    do {
+                        try PairingFileStore.importFile(from: url)
+                        pairingReady = true
+                        statusMessage = "Pairing faylı ProFiles daxilində saxlanıldı."
+                    } catch {
+                        statusMessage = "Fayl oxunmadı: \\(error.localizedDescription)"
+                        showingError = true
+                    }
+                case .failure(let error):
+                    statusMessage = "Seçim ləğv edildi və ya uğursuz oldu: \\(error.localizedDescription)"
+                    showingError = true
+                }
+            }
             .alert("AFC Explorer", isPresented: $showingError) {
                 Button("Bağla", role: .cancel) { }
             } message: {

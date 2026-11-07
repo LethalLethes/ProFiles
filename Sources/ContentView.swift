@@ -5,12 +5,14 @@ private enum ProFilesTab: String, CaseIterable {
     case airlift = "Airlift"
     case afc = "AFC"
     case coreMedia = "CoreMedia"
+    case wallet = "Wallet"
 
     var symbol: String {
         switch self {
         case .airlift: return "arrow.triangle.branch"
         case .afc: return "folder"
         case .coreMedia: return "waveform"
+        case .wallet: return "wallet.pass"
         }
     }
 }
@@ -31,6 +33,10 @@ struct ContentView: View {
             CoreMediaLabView()
                 .tabItem { Label("CoreMedia", systemImage: ProFilesTab.coreMedia.symbol) }
                 .tag(ProFilesTab.coreMedia)
+
+            WalletCardsView()
+                .tabItem { Label("Wallet", systemImage: ProFilesTab.wallet.symbol) }
+                .tag(ProFilesTab.wallet)
         }
         .tint(.cyan)
     }

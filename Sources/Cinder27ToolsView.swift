@@ -12,6 +12,7 @@ struct Cinder27ToolsView: View {
     @State private var fileName = "Fayl seçilməyib"
     @State private var report = "PDF, şəkil, şrift, Mach-O və mətn faylını seçərək real analiz et."
     @State private var isSuccess = false
+    @State private var selfTestReport = "Təhlükəsiz Cinder27 alət testləri hələ başladılmayıb."
 
     var body: some View {
         NavigationStack {
@@ -52,6 +53,15 @@ struct Cinder27ToolsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                Section("Cinder27 alət self-testləri") {
+                    Button("HEX axtarış / əvəzləmə testi") { runSelfTest("hex") }
+                    Button("ZIP writer testi") { runSelfTest("zip") }
+                    Button("Backup / restore testi") { runSelfTest("backup") }
+                    Text(selfTestReport)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+
                 Section("Aktiv analizatorlar") {
                     toolRow("PDF / CoreGraphics", "Səhifə sayı, ölçü və ilk səhifənin raster yoxlaması")
                     toolRow("ImageIO", "Şəkil formatı, ölçülər, frame sayı və thumbnail decode")
@@ -75,6 +85,19 @@ struct Cinder27ToolsView: View {
             ) { result in
                 inspect(result)
             }
+        }
+    }
+
+    private func runSelfTest(_ kind: String) {
+        do {
+            switch kind {
+            case "hex": selfTestReport = try Cinder27SafeTools.hexSelfTest()
+            case "zip": selfTestReport = try Cinder27SafeTools.zipSelfTest()
+            case "backup": selfTestReport = try Cinder27SafeTools.backupRestoreSelfTest()
+            default: selfTestReport = "Naməlum test."
+            }
+        } catch {
+            selfTestReport = "Test xətası: \\(error.localizedDescription)"
         }
     }
 
@@ -135,11 +158,10 @@ private enum CinderFileInspector {
         }
 
         let previewData = data.prefix(160)
-        let hex = previewData.map { String(format: "%02X", $0) }.joined(separator: " ")
         if let text = String(data: data.prefix(1200), encoding: .utf8) {
             return "Format: UTF-8 mətn / naməlum\nÖlçü: \(data.count) bayt\n\n\(text)"
         }
-        return "Format: tanınmayan binary\nÖlçü: \(data.count) bayt\nİlk \(previewData.count) bayt HEX:\n\(hex)"
+        return "Format: tanınmayan binary\nÖlçü: \(data.count) bayt\nHEX:\n\(Cinder27SafeTools.hexDump(data, limit: 160))"
     }
 
     private static func inspectPDF(_ data: Data) throws -> String {
@@ -197,19 +219,5 @@ private enum CinderFileInspector {
     }
 
     private static func inspectMachO(_ data: Data) -> String? {
-        guard data.count >= 28 else { return nil }
-        let b = [UInt8](data.prefix(32))
-        let magic = b[0...3].map { String(format: "%02X", $0) }.joined(separator: " ")
-        let is64 = b[0] == 0xCF && b[1] == 0xFA && b[2] == 0xED && b[3] == 0xFE
-        let is32 = b[0] == 0xCE && b[1] == 0xFA && b[2] == 0xED && b[3] == 0xFE
-        guard is64 || is32 else { return nil }
-        func u32(_ offset: Int) -> UInt32 {
-            UInt32(b[offset]) | (UInt32(b[offset + 1]) << 8) |
-            (UInt32(b[offset + 2]) << 16) | (UInt32(b[offset + 3]) << 24)
-        }
-        let cpu = u32(4)
-        let fileType = u32(12)
-        let commands = u32(16)
-        return "Format: Mach-O\nMagic: \(magic)\nÖlçü: \(data.count) bayt\nArxitektura başlığı: \(is64 ? "64-bit" : "32-bit")\nCPU type: 0x\(String(cpu, radix: 16))\nFile type: \(fileType)\nLoad commands: \(commands)"
-    }
-}
+        Cinder27SafeTools.machoReport(data)
+    }}

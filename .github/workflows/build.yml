@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
       - name: Checkout
@@ -31,10 +31,10 @@ jobs:
           bash AirCard-iOS/build-ios.sh
           cp -R AirCard-iOS/AirliftFFI.xcframework ./AirliftFFI.xcframework
 
-      - name: Select Xcode
+      - name: Verify Xcode 27
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcodebuild -version
+          xcodebuild -showsdks
 
       - name: Install XcodeGen
         run: brew install xcodegen

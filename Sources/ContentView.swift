@@ -5,14 +5,14 @@ private enum ProFilesTab: String, CaseIterable {
     case airlift = "Airlift"
     case afc = "AFC"
     case coreMedia = "CoreMedia"
-    case wallet = "Wallet"
+    case wallet = "Wallet"\n    case cinder = "Cinder27"
 
     var symbol: String {
         switch self {
         case .airlift: return "arrow.triangle.branch"
         case .afc: return "folder"
         case .coreMedia: return "waveform"
-        case .wallet: return "wallet.pass"
+        case .wallet: return "wallet.pass"\n        case .cinder: return "checkmark.shield"
         }
     }
 }

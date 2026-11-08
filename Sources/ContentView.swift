@@ -40,7 +40,7 @@ struct ContentView: View {
                 .tabItem { Label("Wallet", systemImage: ProFilesTab.wallet.symbol) }
                 .tag(ProFilesTab.wallet)
 
-            Cinder27CompatibilityView()
+            Cinder27ToolsView()
                 .tabItem { Label("Cinder27", systemImage: ProFilesTab.cinder.symbol) }
                 .tag(ProFilesTab.cinder)
         }

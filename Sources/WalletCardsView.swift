@@ -46,6 +46,12 @@ private final class WalletCardsModel: ObservableObject {
     @Published var error: String?
     @Published var isApplying = false
     @Published var progress = 0.0
+    @Published var applyLog: [String] = []
+
+    func appendApplyLog(_ line: String) {
+        applyLog.append(line)
+        if applyLog.count > 120 { applyLog.removeFirst(applyLog.count - 120) }
+    }
 
     private var scanThread: Thread?
 
@@ -125,7 +131,7 @@ private final class WalletCardsModel: ObservableObject {
 
     func saveArtwork(_ image: UIImage, for id: String) {
         guard let index = cards.firstIndex(where: { $0.id == id }) else { return }
-        let normalized = WalletArtwork.render(image, size: CGSize(width: 1536, height: 969))
+        let normalized = WalletArtwork.prepareCardImage(image)
         cards[index].image = normalized
         try? FileManager.default.createDirectory(at: WalletCardStore.directory,
                                                   withIntermediateDirectories: true)
@@ -144,68 +150,119 @@ private final class WalletCardsModel: ObservableObject {
             error = "Pairing .plist faylı tapılmadı."
             return
         }
+
         isApplying = true
         progress = 0
+        applyLog.removeAll()
+        appendApplyLog("AirCard Wallet skin injection başladılır.")
         let pairing = WalletCardStore.pairingPath
         let model = self
+
         Task.detached(priority: .userInitiated) {
             var successes = 0
+            var failures = 0
+            let callbackContext = Unmanaged.passRetained(model).toOpaque()
+            defer { Unmanaged<WalletCardsModel>.fromOpaque(callbackContext).release() }
+
             for (index, card) in selected.enumerated() {
-                guard let image = card.image else { continue }
+                guard let image = card.image,
+                      let cleanID = WalletArtwork.cleanCardID(card.id) else {
+                    failures += 1
+                    await MainActor.run { model.appendApplyLog("Kart ID və ya şəkil etibarsızdır: \(card.id)") }
+                    continue
+                }
+
                 let stage = FileManager.default.temporaryDirectory
                     .appendingPathComponent("profiles-wallet-\(UUID().uuidString)", isDirectory: true)
+
                 do {
                     try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
                     let assets = WalletArtwork.assets(from: image)
+                    guard !assets.isEmpty else {
+                        throw NSError(domain: "ProFiles.Wallet", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: "Wallet artwork faylları yaradıla bilmədi."])
+                    }
                     for (name, data) in assets {
                         try data.write(to: stage.appendingPathComponent(name), options: .atomic)
                     }
-                    let target = "/var/mobile/Library/Passes/Cards/\(card.id).pkpass"
+
+                    let target = "/var/mobile/Library/Passes/Cards/\(cleanID).pkpass"
+                    await MainActor.run {
+                        model.appendApplyLog("[\(index + 1)/\(selected.count)] \(cleanID.prefix(12))… kartına yazılır.")
+                    }
+
                     var errorPointer: UnsafeMutablePointer<CChar>?
-                    let rc = pairing.withCString { p in
-                        stage.path.withCString { s in
-                            target.withCString { t in
-                                al_exploit_write_dir(p, s, t, nil, nil, &errorPointer)
+                    let rc = pairing.withCString { pairC in
+                        stage.path.withCString { sourceC in
+                            target.withCString { targetC in
+                                al_exploit_write_dir(pairC, sourceC, targetC, { context, message in
+                                    guard let context, let message else { return }
+                                    let sink = Unmanaged<WalletCardsModel>.fromOpaque(context).takeUnretainedValue()
+                                    let line = String(cString: message)
+                                    DispatchQueue.main.async { sink.appendApplyLog(line) }
+                                }, callbackContext, &errorPointer)
                             }
                         }
                     }
+
                     let message = errorPointer.map { String(cString: $0) }
                     if let errorPointer { al_string_free(errorPointer) }
-                    if rc == 0 {
-                        successes += 1
-                        // Best-effort invalidation of the per-card artwork caches.
-                        let invalidation = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("profiles-wallet-cache-\(UUID().uuidString)", isDirectory: true)
-                        try? FileManager.default.createDirectory(at: invalidation, withIntermediateDirectories: true)
-                        for leaf in ["FrontFace", "Preview", "PlaceHolder"] {
-                            try? Data("corrupted".utf8).write(to: invalidation.appendingPathComponent(leaf))
+
+                    guard rc == 0 else {
+                        failures += 1
+                        await MainActor.run {
+                            model.appendApplyLog("FFI yazma xətası (\(rc)): \(message ?? "səbəb göstərilmədi")")
+                            model.error = "Kart şəkli yazılmadı: \(message ?? "FFI error \(rc)")"
                         }
-                        for ext in [".cache", ".pkcache"] {
-                            var ignored: UnsafeMutablePointer<CChar>?
-                            _ = pairing.withCString { p in
-                                invalidation.path.withCString { s in
-                                    ("/var/mobile/Library/Passes/Cards/\(card.id)\(ext)").withCString { t in
-                                        al_exploit_write_dir(p, s, t, nil, nil, &ignored)
-                                    }
+                        try? FileManager.default.removeItem(at: stage)
+                        continue
+                    }
+
+                    await MainActor.run { model.appendApplyLog("Kart faylları yazıldı. Cache yenilənir…") }
+
+                    // Same cache invalidation sequence used by AirCard.
+                    let invalidation = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("profiles-wallet-cache-\(UUID().uuidString)", isDirectory: true)
+                    try FileManager.default.createDirectory(at: invalidation, withIntermediateDirectories: true)
+                    for leaf in ["FrontFace", "Preview", "PlaceHolder"] {
+                        try Data("corrupted".utf8).write(to: invalidation.appendingPathComponent(leaf), options: .atomic)
+                    }
+
+                    for ext in [".cache", ".pkcache"] {
+                        var ignored: UnsafeMutablePointer<CChar>?
+                        _ = pairing.withCString { pairC in
+                            invalidation.path.withCString { sourceC in
+                                ("/var/mobile/Library/Passes/Cards/\(cleanID)\(ext)").withCString { targetC in
+                                    al_exploit_write_dir(pairC, sourceC, targetC, nil, nil, &ignored)
                                 }
                             }
-                            if let ignored { al_string_free(ignored) }
                         }
-                        try? FileManager.default.removeItem(at: invalidation)
-                    } else {
-                        await MainActor.run { model.error = message ?? "Kart tətbiq edilə bilmədi (\(rc))." }
+                        if let ignored { al_string_free(ignored) }
                     }
+
+                    try? FileManager.default.removeItem(at: invalidation)
                     try? FileManager.default.removeItem(at: stage)
+                    successes += 1
+                    await MainActor.run { model.appendApplyLog("Skin yazıldı: \(cleanID.prefix(12))…") }
                 } catch {
-                    await MainActor.run { model.error = error.localizedDescription }
+                    failures += 1
+                    try? FileManager.default.removeItem(at: stage)
+                    await MainActor.run {
+                        model.appendApplyLog("Xəta: \(error.localizedDescription)")
+                        model.error = error.localizedDescription
+                    }
                 }
+
                 await MainActor.run { model.progress = Double(index + 1) / Double(selected.count) }
             }
-            let completedCount = successes
+
+            let successCount = successes
+            let failureCount = failures
             let totalCount = selected.count
             await MainActor.run {
                 model.isApplying = false
-                model.status = "\(completedCount)/\(totalCount) kart üçün dizayn tətbiq edildi. Wallet-i tam bağlayıb yenidən aç."
+                model.status = "\(successCount)/\(totalCount) kart üçün skin yazıldı; \(failureCount) xəta. Wallet-i tam bağla və yenidən aç."
+                model.appendApplyLog("Yekun: \(successCount) uğurlu, \(failureCount) uğursuz.")
             }
         }
     }
@@ -218,38 +275,88 @@ private final class WalletCardsModel: ObservableObject {
 }
 
 private enum WalletArtwork {
-    static func render(_ image: UIImage, size: CGSize) -> UIImage {
+    static let placeholderIDs: Set<String> = [
+        "OM6NYhwXMZrAw0sRUjR62wmF4ZQ=",
+        "M6nDwZrkYbFlsodLgCbvyFZQ1cc=",
+        "kJL-D0rr-SZhbj2c8nK-OQ9hCMY=",
+        "hwAtAmHKYwsQrJbT5cTNDsaxVME="
+    ]
+
+    static func cleanCardID(_ raw: String) -> String? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "'\",()<>;[]{}"))
+        if value.contains("/") { value = (value as NSString).lastPathComponent }
+        for ext in [".pkpass", ".cache", ".pkcache"] where value.hasSuffix(ext) {
+            value = String(value.dropLast(ext.count))
+        }
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "'\",()<>;[]{}. "))
+        guard (20...64).contains(value.count), !value.contains("/") else { return nil }
+        if value.count == 36 && value.filter({ $0 == "-" }).count == 4 { return nil }
+        return value
+    }
+
+    static func prepareCardImage(_ image: UIImage) -> UIImage {
+        let normalized = normalizeAndDownsample(image, maxDimension: 2560)
+        return resize(normalized, targetSize: CGSize(width: 1536, height: 969))
+    }
+
+    static func normalizeAndDownsample(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return image }
+        let scale = min(1.0, maxDimension / max(size.width, size.height))
+        let target = CGSize(width: max(1, floor(size.width * scale)),
+                            height: max(1, floor(size.height * scale)))
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        return renderer.image { _ in
-            let scale = max(size.width / image.size.width, size.height / image.size.height)
-            let w = image.size.width * scale
-            let h = image.size.height * scale
-            image.draw(in: CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h))
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
         }
     }
 
-    static func assets(from image: UIImage) -> [String: Data] {
-        let normalized = render(image, size: CGSize(width: 1536, height: 969))
-        let twoX = render(normalized, size: CGSize(width: 1024, height: 646))
-        var result: [String: Data] = [:]
-        if let d = normalized.pngData() {
-            for name in ["cardBackgroundCombined@3x.png", "diffuse@3x.png", "background@3x.png", "strip@3x.png"] { result[name] = d }
+    static func resize(_ image: UIImage, targetSize: CGSize) -> UIImage {
+        let imageSize = image.size
+        guard imageSize.width > 0, imageSize.height > 0 else { return image }
+        let scale = max(targetSize.width / imageSize.width, targetSize.height / imageSize.height)
+        let scaled = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let origin = CGPoint(x: (targetSize.width - scaled.width) / 2,
+                             y: (targetSize.height - scaled.height) / 2)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let result = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: origin, size: scaled))
         }
-        if let d = twoX.pngData() {
-            for name in ["cardBackgroundCombined@2x.png", "diffuse@2x.png", "background@2x.png", "strip@2x.png"] { result[name] = d }
-        }
-        let bounds = CGRect(origin: .zero, size: CGSize(width: 1536, height: 969))
-        let pdf = UIGraphicsPDFRenderer(bounds: bounds).pdfData { context in
-            context.beginPage()
-            normalized.draw(in: bounds)
-        }
-        result["cardBackgroundCombined.pdf"] = pdf
-        result["background.pdf"] = pdf
-        result["strip.pdf"] = pdf
         return result
+    }
+
+    static func assets(from image: UIImage) -> [String: Data] {
+        let normalized = normalizeAndDownsample(image, maxDimension: 2560)
+        let bg3x = resize(normalized, targetSize: CGSize(width: 1536, height: 969))
+        let bg2x = resize(normalized, targetSize: CGSize(width: 1024, height: 646))
+        var skins: [String: Data] = [:]
+
+        if let data3x = bg3x.pngData() {
+            skins["cardBackgroundCombined@3x.png"] = data3x
+            skins["diffuse@3x.png"] = data3x
+            skins["background@3x.png"] = data3x
+            skins["strip@3x.png"] = data3x
+        }
+        if let data2x = bg2x.pngData() {
+            skins["cardBackgroundCombined@2x.png"] = data2x
+            skins["diffuse@2x.png"] = data2x
+            skins["background@2x.png"] = data2x
+            skins["strip@2x.png"] = data2x
+        }
+
+        let pdfBounds = CGRect(origin: .zero, size: CGSize(width: 1536, height: 969))
+        let pdf = UIGraphicsPDFRenderer(bounds: pdfBounds).pdfData { context in
+            context.beginPage()
+            normalized.draw(in: pdfBounds)
+        }
+        skins["cardBackgroundCombined.pdf"] = pdf
+        skins["background.pdf"] = pdf
+        skins["strip.pdf"] = pdf
+        return skins
     }
 }
 
@@ -310,10 +417,15 @@ struct WalletCardsView: View {
                     .listStyle(.insetGrouped)
                 }
 
-                if model.isApplying {
-                    VStack(spacing: 6) {
-                        ProgressView(value: model.progress)
-                        Text("Wallet dizaynı tətbiq olunur…").font(.caption).foregroundStyle(.secondary)
+                if model.isApplying || !model.applyLog.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if model.isApplying { ProgressView(value: model.progress) }
+                        Text(model.isApplying ? "Wallet dizaynı tətbiq olunur…" : model.status)
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(model.applyLog.suffix(5).enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary).lineLimit(2)
+                        }
                     }.padding(.horizontal)
                 }
                 Button { model.applySelected() } label: {

@@ -56,14 +56,15 @@ private enum AFCBridge {
         let rc = pairingPath.withCString { p in
             path.withCString { r in al_afc_read_file(p, r, &bytes, &length, &error) }
         }
-        defer {
-            if let bytes { al_buffer_free(bytes) }
-            if let error { al_string_free(error) }
-        }
+        defer { if let error { al_string_free(error) } }
         guard rc == 0, let bytes else {
+            if let bytes { al_buffer_free(bytes) }
             throw AFCBridgeError.invalidResult(error.map { String(cString: $0) } ?? "AFC oxuma xətası: \(rc)")
         }
-        return Data(bytes: bytes, count: length)
+        // Transfer ownership of the FFI buffer to Data to avoid an additional full-size copy.
+        return Data(bytesNoCopy: UnsafeMutableRawPointer(bytes), count: max(0, length), deallocator: .custom { pointer, _ in
+            al_buffer_free(pointer.assumingMemoryBound(to: CChar.self))
+        })
     }
 
     static func write(_ data: Data, to path: String) throws {
@@ -317,7 +318,9 @@ private struct AFCRemoteFilePreview: View {
     @State private var player: AVPlayer?
 
     private var ext: String { URL(fileURLWithPath: file.name).pathExtension.lowercased() }
-    private var isVideo: Bool { ["mov", "mp4", "m4v", "avi", "mkv", "3gp"].contains(ext) }
+    private var isVideo: Bool { ["mov", "mp4", "m4v", "avi", "mkv", "3gp", "mpeg", "mpg"].contains(ext) }
+    private var isAudio: Bool { ["mp3", "m4a", "aac", "wav", "aiff", "aif", "caf", "flac", "alac", "ogg"].contains(ext) }
+    private var isArchive: Bool { ["zip"].contains(ext) }
     private var isSQLiteDatabase: Bool {
         guard let data else { return ["sqlite", "sqlite3", "db"].contains(ext) }
         return data.starts(with: Array("SQLite format 3\u{0}".utf8))
@@ -348,7 +351,7 @@ private struct AFCRemoteFilePreview: View {
                         Text("Fayl açıla bilmədi").font(.headline)
                         Text(errorMessage).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }.padding()
-                } else if isVideo, let player {
+                } else if (isVideo || isAudio), let player {
                     VideoPlayer(player: player)
                         .onAppear {
                             do {
@@ -375,8 +378,10 @@ private struct AFCRemoteFilePreview: View {
                 } else if ["png", "jpg", "jpeg", "heic", "gif", "webp", "tif", "tiff", "bmp"].contains(ext),
                           let data, let image = UIImage(data: data) {
                     ScrollView { Image(uiImage: image).resizable().scaledToFit().padding() }
+                } else if isArchive, let localPreviewURL {
+                    ZIPArchivePreview(url: localPreviewURL)
                 } else if isSQLiteDatabase, let localPreviewURL {
-                    SQLiteDatabasePreview(url: localPreviewURL)
+                    SQLiteDatabasePreview(url: localPreviewURL, remotePath: file.path)
                 } else if ext == "pdf", let data {
                     PDFRemotePreview(data: data)
                 } else if let textContent {
@@ -415,7 +420,7 @@ private struct AFCRemoteFilePreview: View {
     private func load() {
         let remotePath = file.path
         let fileName = file.name
-        let video = isVideo
+        let playable = isVideo || isAudio
         Task.detached(priority: .userInitiated) {
             do {
                 let result = try AFCBridge.read(remotePath)
@@ -427,7 +432,7 @@ private struct AFCRemoteFilePreview: View {
                 await MainActor.run {
                     data = result
                     localPreviewURL = previewURL
-                    if video { player = AVPlayer(url: previewURL) }
+                    if playable { player = AVPlayer(url: previewURL) }
                     loading = false
                 }
             } catch {
@@ -526,34 +531,56 @@ private struct QuickLookRemotePreview: UIViewControllerRepresentable {
 
 private struct SQLiteDatabasePreview: View {
     let url: URL
+    let remotePath: String
     @State private var tables: [String] = []
     @State private var errorMessage: String?
+    @State private var sql = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+    @State private var sqlResult = ""
+    @State private var isEditing = false
+    @State private var isExecuting = false
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if let errorMessage {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
                     Text("SQLite bazası açıla bilmədi")
                     Text(errorMessage).font(.caption).foregroundStyle(.secondary)
                 }.padding()
-            } else if tables.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "tablecells").font(.largeTitle)
-                    Text("Cədvəl tapılmadı")
-                    Text("Baza boş ola bilər və ya yalnız daxili obyektlər saxlayır.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }.padding()
             } else {
-                List(tables, id: \.self) { table in
-                    NavigationLink {
-                        SQLiteTablePreview(url: url, table: table)
-                    } label: {
-                        Label(table, systemImage: "tablecells")
+                List {
+                    Section("Cədvəllər və görünüşlər") {
+                        if tables.isEmpty {
+                            Text("Cədvəl tapılmadı").foregroundStyle(.secondary)
+                        }
+                        ForEach(tables, id: \.self) { table in
+                            NavigationLink {
+                                SQLiteTablePreview(url: url, table: table)
+                            } label: {
+                                Label(table, systemImage: "tablecells")
+                            }
+                        }
+                    }
+                    Section("SQL redaktoru") {
+                        TextEditor(text: $sql)
+                            .font(.system(.footnote, design: .monospaced))
+                            .frame(minHeight: 110)
+                        Button {
+                            executeSQL()
+                        } label: {
+                            if isExecuting { ProgressView() }
+                            else { Label("SQL icra et və bazanı yadda saxla", systemImage: "play.fill") }
+                        }
+                        .disabled(isExecuting || sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if !sqlResult.isEmpty {
+                            Text(sqlResult).font(.caption).textSelection(.enabled)
+                        }
                     }
                 }
             }
         }
+        .navigationTitle("SQLite")
+        .navigationBarTitleDisplayMode(.inline)
         .task { loadTables() }
     }
 
@@ -572,13 +599,42 @@ private struct SQLiteDatabasePreview: View {
             defer { sqlite3_finalize(statement) }
             var found: [String] = []
             while sqlite3_step(statement) == SQLITE_ROW {
-                if let value = sqlite3_column_text(statement, 0) {
-                    found.append(String(cString: value))
-                }
+                if let value = sqlite3_column_text(statement, 0) { found.append(String(cString: value)) }
             }
             tables = found
-        } catch {
-            errorMessage = error.localizedDescription
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func executeSQL() {
+        isExecuting = true
+        let statementText = sql
+        let localURL = url
+        let targetPath = remotePath
+        Task.detached(priority: .userInitiated) {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(localURL.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else {
+                await MainActor.run { sqlResult = "Baza yazmaq üçün açıla bilmədi."; isExecuting = false }
+                return
+            }
+            var message: UnsafeMutablePointer<CChar>?
+            let rc = sqlite3_exec(db, statementText, nil, nil, &message)
+            let resultText = message.map { String(cString: $0) } ?? (rc == SQLITE_OK ? "SQL uğurla icra edildi." : String(cString: sqlite3_errmsg(db)))
+            if let message { sqlite3_free(message) }
+            if rc == SQLITE_OK {
+                _ = sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE);", nil, nil, nil)
+            }
+            sqlite3_close(db)
+            do {
+                guard rc == SQLITE_OK else { throw SQLitePreviewError(message: resultText) }
+                let updated = try Data(contentsOf: localURL)
+                try AFCBridge.write(updated, to: targetPath)
+                await MainActor.run {
+                    sqlResult = resultText + "\nDəyişikliklər cihazdakı fayla yazıldı."
+                    isExecuting = false
+                }
+            } catch {
+                await MainActor.run { sqlResult = "Yadda saxlama xətası: \(error.localizedDescription)"; isExecuting = false }
+            }
         }
     }
 }
@@ -669,6 +725,59 @@ private struct SQLiteTablePreview: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+private struct ZIPArchivePreview: View {
+    let url: URL
+    @State private var paths: [String] = []
+    @State private var selectedURL: URL?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.red).padding()
+            } else if let selectedURL {
+                QuickLookRemotePreview(url: selectedURL)
+            } else {
+                List(paths, id: \.self) { path in
+                    Button {
+                        extract(path)
+                    } label: {
+                        Label(path, systemImage: "doc")
+                    }
+                }
+            }
+        }
+        .navigationTitle("ZIP arxivi")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { load() }
+    }
+
+    private func load() {
+        do {
+            guard let archive = Archive(url: url, accessMode: .read) else {
+                throw SQLitePreviewError(message: "ZIP arxivi açıla bilmədi.")
+            }
+            paths = archive.filter { $0.type == .file }.map(\.path).sorted()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func extract(_ path: String) {
+        do {
+            guard let archive = Archive(url: url, accessMode: .read),
+                  let entry = archive.first(where: { $0.path == path && $0.type == .file }) else {
+                throw SQLitePreviewError(message: "Arxiv elementi tapılmadı.")
+            }
+            let safeName = URL(fileURLWithPath: path).lastPathComponent
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathComponent(safeName)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            _ = try archive.extract(entry, to: destination)
+            selectedURL = destination
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 

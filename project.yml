@@ -8,6 +8,10 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1,2"
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: 0.9.19
 targets:
   ProFiles:
     type: application
@@ -17,6 +21,8 @@ targets:
     dependencies:
       - framework: AirliftFFI.xcframework
         embed: false
+      - package: ZIPFoundation
+        product: ZIPFoundation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.procreations.profiles

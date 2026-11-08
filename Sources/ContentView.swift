@@ -5,14 +5,16 @@ private enum ProFilesTab: String, CaseIterable {
     case airlift = "Airlift"
     case afc = "AFC"
     case coreMedia = "CoreMedia"
-    case wallet = "Wallet"\n    case cinder = "Cinder27"
+    case wallet = "Wallet"
+    case cinder = "Cinder27"
 
     var symbol: String {
         switch self {
         case .airlift: return "arrow.triangle.branch"
         case .afc: return "folder"
         case .coreMedia: return "waveform"
-        case .wallet: return "wallet.pass"\n        case .cinder: return "checkmark.shield"
+        case .wallet: return "wallet.pass"
+        case .cinder: return "checkmark.shield"
         }
     }
 }
@@ -37,6 +39,10 @@ struct ContentView: View {
             WalletCardsView()
                 .tabItem { Label("Wallet", systemImage: ProFilesTab.wallet.symbol) }
                 .tag(ProFilesTab.wallet)
+
+            Cinder27CompatibilityView()
+                .tabItem { Label("Cinder27", systemImage: ProFilesTab.cinder.symbol) }
+                .tag(ProFilesTab.cinder)
         }
         .tint(.cyan)
     }
@@ -371,7 +377,8 @@ private struct CoreMediaLabView: View {
                     )
                     StatusCard(
                         title: "Cihaz",
-                        detail: "Model: \(UIDevice.current.model)\n iOS: \(UIDevice.current.systemVersion)",
+                        detail: "Model: \(UIDevice.current.model)
+ iOS: \(UIDevice.current.systemVersion)",
                         symbol: "iphone"
                     )
                     StatusCard(
@@ -405,9 +412,11 @@ private struct CoreMediaLabView: View {
                             let data = try readScopedData(from: url)
                             let content = String(data: data, encoding: .utf8) ?? "Log UTF-8 mətn deyil."
                             let lines = content.components(separatedBy: .newlines)
-                            let preview = lines.prefix(8).joined(separator: "\n")
+                            let preview = lines.prefix(8).joined(separator: "
+")
                             logName = url.lastPathComponent
-                            logSummary = "Ölçü: \(data.count) bayt.\n\(preview.prefix(700))"
+                            logSummary = "Ölçü: \(data.count) bayt.
+\(preview.prefix(700))"
                             logLoaded = true
                         } catch {
                             logSummary = "Log oxunmadı: \(error.localizedDescription)"

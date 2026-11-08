@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import PhotosUI
 import AirliftFFI
 
 private struct WalletCard: Identifiable {
@@ -302,13 +303,20 @@ private enum WalletArtwork {
     static func cleanCardID(_ raw: String) -> String? {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         value = value.trimmingCharacters(in: CharacterSet(charactersIn: "'\",()<>;[]{}"))
-        if value.contains("/") { value = (value as NSString).lastPathComponent }
         for ext in [".pkpass", ".cache", ".pkcache"] where value.hasSuffix(ext) {
             value = String(value.dropLast(ext.count))
         }
         value = value.trimmingCharacters(in: CharacterSet(charactersIn: "'\",()<>;[]{}. "))
-        guard (20...64).contains(value.count), !value.contains("/") else { return nil }
-        if value.count == 36 && value.filter({ $0 == "-" }).count == 4 { return nil }
+        guard (20...64).contains(value.count),
+              value.range(of: #"^[A-Za-z0-9+/_=-]+$"#, options: .regularExpression) != nil,
+              value.contains(where: { $0.isLetter }) else { return nil }
+
+        // AirCard card hashes are Base64/Base64URL values, not arbitrary long numbers.
+        var base64 = value.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 { base64.append("=") }
+        guard let decoded = Data(base64Encoded: base64),
+              (16...48).contains(decoded.count) else { return nil }
         return value
     }
 
@@ -384,6 +392,8 @@ struct WalletCardsView: View {
     @State private var pendingImage: UIImage?
     @State private var showManualAdd = false
     @State private var manualCardIDs = ""
+    @State private var showPhotoPicker = false
+    @State private var selectedPhoto: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
@@ -433,7 +443,11 @@ struct WalletCardsView: View {
                                 }
                                 Spacer()
                                 Menu {
-                                    Button("Şəkil seç və redaktə et", systemImage: "photo") { importingFor = card.id }
+                                    Button("Qalereyadan seç", systemImage: "photo") {
+                                        importingFor = card.id
+                                        showPhotoPicker = true
+                                    }
+                                    Button("Files-dən seç", systemImage: "folder") { importingFor = card.id }
                                     Button("Kartı siyahıdan sil", systemImage: "trash", role: .destructive) { model.removeCard(card.id) }
                                 } label: { Image(systemName: "ellipsis.circle").font(.title2) }
                             }.padding(.vertical, 4)
@@ -499,19 +513,42 @@ struct WalletCardsView: View {
                     }
                 }
             }
-            .fileImporter(isPresented: Binding(get: { importingFor != nil }, set: { if !$0 { importingFor = nil } }),
-                          allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
+            .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhoto, matching: .images)
+            .onChange(of: selectedPhoto) { newItem in
+                guard let newItem, let targetCard = importingFor else { return }
+                Task {
+                    do {
+                        guard let data = try await newItem.loadTransferable(type: Data.self),
+                              let image = UIImage(data: data) else {
+                            model.error = "Qalereyadan şəkil oxunmadı. Başqa şəkil seç."
+                            return
+                        }
+                        pendingImage = image
+                        editingCard = targetCard
+                    } catch {
+                        model.error = "Qalereya xətası: \(error.localizedDescription)"
+                    }
+                    importingFor = nil
+                    selectedPhoto = nil
+                }
+            }
+            .fileImporter(isPresented: Binding(get: { importingFor != nil && !showPhotoPicker }, set: { if !$0 { importingFor = nil } }),
+                          allowedContentTypes: [.image, .png, .jpeg, .heic, .heif], allowsMultipleSelection: false) { result in
+                let targetCard = importingFor
+                importingFor = nil
                 do {
                     guard let url = try result.get().first else { return }
                     let access = url.startAccessingSecurityScopedResource()
                     defer { if access { url.stopAccessingSecurityScopedResource() } }
-                    guard let image = UIImage(data: try Data(contentsOf: url)) else {
-                        model.error = "Şəkil açıla bilmədi."; return
+                    let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                    guard let image = UIImage(data: data) else {
+                        model.error = "Bu fayl şəkil kimi açıla bilmədi."; return
                     }
                     pendingImage = image
-                    editingCard = importingFor
-                } catch { model.error = error.localizedDescription }
-                importingFor = nil
+                    editingCard = targetCard
+                } catch {
+                    model.error = "Files-dən oxuma xətası: \(error.localizedDescription)"
+                }
             }
             .sheet(isPresented: Binding(get: { pendingImage != nil && editingCard != nil },
                                         set: { if !$0 { pendingImage = nil; editingCard = nil } })) {

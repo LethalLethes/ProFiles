@@ -198,6 +198,20 @@ private struct AirliftExplorerView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+
+                    NavigationLink {
+                        AFCFileManagerView()
+                    } label: {
+                        Label("Airlift-in görə bildiyi faylları aç", systemImage: "folder.badge.gearshape")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    StatusCard(
+                        title: "Fayl görünüşünün sərhədi",
+                        detail: "Bu siyahı pairing vasitəsilə AFC xidmətinin həqiqətən göstərdiyi fayl və qovluqları açır. Hazırkı Airlift FFI ümumi /System və /usr kimi yollar üçün ayrıca oxu/siyahılama API-si vermir; exploit-in hədəfə yazması həmin qovluqları oxuya bilməsi demək deyil.",
+                        symbol: "info.circle"
+                    )
                     StatusCard(
                         title: "Exploit avtomatik başladılmır",
                         detail: "Bu bölmə yalnız sənin təqdim etdiyin test hesabatını oxuyur. Canary nəticəsi exploit-in ümumi sistem fayllarına giriş verdiyini sübut etmir.",

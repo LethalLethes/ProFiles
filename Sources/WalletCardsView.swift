@@ -72,7 +72,9 @@ private final class WalletCardsModel: ObservableObject {
         status = "Apple Pay-i aç və kartına toxun…"
         let path = WalletCardStore.pairingPath
         let callbackContext = Unmanaged.passRetained(self).toOpaque()
+        let callbackContextAddress = UInt(bitPattern: callbackContext)
         scanThread = Thread {
+            let callbackContext = UnsafeMutableRawPointer(bitPattern: callbackContextAddress)!
             var outError: UnsafeMutablePointer<CChar>?
             let rc = path.withCString { pairing in
                 al_syslog_stream_start(pairing, { context, line in
@@ -145,7 +147,8 @@ private final class WalletCardsModel: ObservableObject {
         isApplying = true
         progress = 0
         let pairing = WalletCardStore.pairingPath
-        Task.detached(priority: .userInitiated) { [weak self] in
+        let model = self
+        Task.detached(priority: .userInitiated) {
             var successes = 0
             for (index, card) in selected.enumerated() {
                 guard let image = card.image else { continue }

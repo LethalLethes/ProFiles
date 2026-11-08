@@ -267,6 +267,23 @@ private final class WalletCardsModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func addCardsManually(_ raw: String) -> Int {
+        let parts = raw.components(separatedBy: CharacterSet(charactersIn: " \n\r\t,;"))
+        var added = 0
+        for part in parts {
+            guard let cleanID = WalletArtwork.cleanCardID(part),
+                  !cards.contains(where: { $0.id == cleanID }) else { continue }
+            cards.append(WalletCard(id: cleanID))
+            added += 1
+        }
+        if added > 0 {
+            WalletCardStore.saveIDs(cards.map(\.id))
+            status = "\(added) kart ID-si manual əlavə edildi."
+        }
+        return added
+    }
+
     func removeCard(_ id: String) {
         cards.removeAll { $0.id == id }
         try? FileManager.default.removeItem(at: WalletCardStore.imageURL(for: id))
@@ -365,6 +382,8 @@ struct WalletCardsView: View {
     @State private var importingFor: String?
     @State private var editingCard: String?
     @State private var pendingImage: UIImage?
+    @State private var showManualAdd = false
+    @State private var manualCardIDs = ""
 
     var body: some View {
         NavigationStack {
@@ -374,11 +393,17 @@ struct WalletCardsView: View {
                         .font(.title2.bold())
                     Text("Kartı aşkar et, şəkil seç, görünüşünü tənzimlə və Wallet-ə tətbiq et.")
                         .font(.subheadline).foregroundStyle(.secondary)
-                    Button { model.toggleScan() } label: {
-                        Label(model.isScanning ? "Axtarışı dayandır" : "Wallet kartlarını aşkar et",
-                              systemImage: model.isScanning ? "stop.circle.fill" : "dot.radiowaves.left.and.right")
-                            .frame(maxWidth: .infinity)
-                    }.buttonStyle(.borderedProminent)
+                    HStack(spacing: 10) {
+                        Button { model.toggleScan() } label: {
+                            Label(model.isScanning ? "Dayandır" : "Kartları aşkar et",
+                                  systemImage: model.isScanning ? "stop.circle.fill" : "dot.radiowaves.left.and.right")
+                                .frame(maxWidth: .infinity)
+                        }.buttonStyle(.borderedProminent)
+                        Button { showManualAdd = true } label: {
+                            Label("Manual əlavə et", systemImage: "plus")
+                                .frame(maxWidth: .infinity)
+                        }.buttonStyle(.bordered)
+                    }
                     Text(model.status).font(.footnote).foregroundStyle(.secondary)
                 }.padding(.horizontal)
 
@@ -438,6 +463,42 @@ struct WalletCardsView: View {
             }
             .navigationTitle("Apple Wallet")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showManualAdd) {
+                NavigationStack {
+                    Form {
+                        Section("AirCard Card Hash / Token") {
+                            TextField("Kart hash/token-ini yapışdır", text: $manualCardIDs, axis: .vertical)
+                                .font(.system(.body, design: .monospaced))
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .lineLimit(3...7)
+                        }
+                        Section {
+                            Text("AirCard-da Manual Add bölməsindəki kart hash-ini buraya yapışdır. Bir neçə ID-ni boşluq, vergül və ya yeni sətirlə ayıra bilərsən. Bank kartının nömrəsini, CVV-ni və ya Apple Pay ödəniş tokenini daxil etmə.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .navigationTitle("Kartı manual əlavə et")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Ləğv et") { showManualAdd = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Əlavə et") {
+                                let added = model.addCardsManually(manualCardIDs)
+                                if added == 0 {
+                                    model.error = "Etibarlı yeni kart hash-i tapılmadı. AirCard-dan tam hash-i köçür."
+                                }
+                                manualCardIDs = ""
+                                showManualAdd = false
+                            }
+                            .disabled(manualCardIDs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                }
+            }
             .fileImporter(isPresented: Binding(get: { importingFor != nil }, set: { if !$0 { importingFor = nil } }),
                           allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
                 do {

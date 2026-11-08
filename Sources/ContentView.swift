@@ -7,6 +7,7 @@ private enum ProFilesTab: String, CaseIterable {
     case coreMedia = "CoreMedia"
     case wallet = "Wallet"
     case cinder = "Cinder27"
+    case mobileGestalt = "MobileGestalt"
 
     var symbol: String {
         switch self {
@@ -15,6 +16,7 @@ private enum ProFilesTab: String, CaseIterable {
         case .coreMedia: return "waveform"
         case .wallet: return "wallet.pass"
         case .cinder: return "checkmark.shield"
+        case .mobileGestalt: return "slider.horizontal.3"
         }
     }
 }
@@ -43,6 +45,10 @@ struct ContentView: View {
             Cinder27ToolsView()
                 .tabItem { Label("Cinder27", systemImage: ProFilesTab.cinder.symbol) }
                 .tag(ProFilesTab.cinder)
+
+            MobileGestaltEditorView()
+                .tabItem { Label("MobileGestalt", systemImage: ProFilesTab.mobileGestalt.symbol) }
+                .tag(ProFilesTab.mobileGestalt)
         }
         .tint(.cyan)
     }

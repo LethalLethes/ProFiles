@@ -377,8 +377,7 @@ private struct CoreMediaLabView: View {
                     )
                     StatusCard(
                         title: "Cihaz",
-                        detail: "Model: \(UIDevice.current.model)
- iOS: \(UIDevice.current.systemVersion)",
+                        detail: "Model: \(UIDevice.current.model) · iOS: \(UIDevice.current.systemVersion)",
                         symbol: "iphone"
                     )
                     StatusCard(
@@ -412,11 +411,9 @@ private struct CoreMediaLabView: View {
                             let data = try readScopedData(from: url)
                             let content = String(data: data, encoding: .utf8) ?? "Log UTF-8 mətn deyil."
                             let lines = content.components(separatedBy: .newlines)
-                            let preview = lines.prefix(8).joined(separator: "
-")
+                            let preview = lines.prefix(8).joined(separator: "\n")
                             logName = url.lastPathComponent
-                            logSummary = "Ölçü: \(data.count) bayt.
-\(preview.prefix(700))"
+                            logSummary = "Ölçü: \(data.count) bayt.\n\(preview.prefix(700))"
                             logLoaded = true
                         } catch {
                             logSummary = "Log oxunmadı: \(error.localizedDescription)"

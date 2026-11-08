@@ -30,7 +30,7 @@ struct ContentView: View {
                 .tabItem { Label("AFC", systemImage: ProFilesTab.afc.symbol) }
                 .tag(ProFilesTab.afc)
 
-            CoreMediaLabView()
+            CoreMediaDiagnosticsView()
                 .tabItem { Label("CoreMedia", systemImage: ProFilesTab.coreMedia.symbol) }
                 .tag(ProFilesTab.coreMedia)
 

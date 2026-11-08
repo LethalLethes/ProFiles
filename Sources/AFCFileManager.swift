@@ -6,6 +6,7 @@ import PDFKit
 import QuickLook
 import UIKit
 import SQLite3
+import ZIPFoundation
 
 private struct AFCEntry: Identifiable, Hashable, Decodable {
     let name: String
@@ -536,7 +537,6 @@ private struct SQLiteDatabasePreview: View {
     @State private var errorMessage: String?
     @State private var sql = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
     @State private var sqlResult = ""
-    @State private var isEditing = false
     @State private var isExecuting = false
 
     var body: some View {
